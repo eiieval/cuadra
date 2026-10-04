@@ -6,6 +6,23 @@ const num = (v) => (Number.isFinite(Number(v)) ? Math.round(Number(v) * 100) / 1
 const day = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(v) ? v : '');
 const list = (v, max) => (Array.isArray(v) ? v.slice(-max) : []);
 
+// Earlier turns, shaped for strict alternation starting with the user, as some models require: only user and
+// assistant turns, bounded sizes, same-role neighbours merged, no leading reply and no trailing user turn.
+export function shapeHistory(raw) {
+  const history = list(raw, 8)
+    .filter((h) => h && (h.role === 'user' || h.role === 'assistant'))
+    .map((h) => ({ role: h.role, text: clean(h.text, 800) }))
+    .filter((h) => h.text)
+    .reduce((out, h) => {
+      if (out.at(-1)?.role === h.role) out.at(-1).text = `${out.at(-1).text}\n${h.text}`.slice(0, 1600);
+      else out.push(h);
+      return out;
+    }, []);
+  while (history[0]?.role === 'assistant') history.shift();
+  if (history.at(-1)?.role === 'user') history.pop();
+  return history;
+}
+
 // POST { message, context, history } -> { reply, actions }. Actions are proposals; the user confirms them in the UI.
 // Everything the browser sends is re-shaped here: only known fields, bounded sizes, no control characters.
 export default async function handler(req, res) {
@@ -29,10 +46,7 @@ export default async function handler(req, res) {
     })),
     clients: list(c.clients, 30).map((k) => ({ name: clean(k?.name, 120), nif: clean(k?.nif, 20), email: clean(k?.email, 254) })),
   };
-  const history = list(g.body.history, 8)
-    .filter((h) => h && (h.role === 'user' || h.role === 'assistant'))
-    .map((h) => ({ role: h.role, text: clean(h.text, 800) }))
-    .filter((h) => h.text);
+  const history = shapeHistory(g.body.history);
   try {
     json(res, 200, await runAgent({ message, context, history }));
   } catch (e) {
