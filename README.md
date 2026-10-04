@@ -2,46 +2,162 @@
 
 **The AI invoicing agent for PayPal merchants. Describe the sale, confirm, get paid, stay compliant.**
 
-Small businesses lose hours on invoices, chasing payments and new e-invoicing rules. In Spain, every invoicing system must produce VeriFactu records from 2027: tamper-evident, hash-chained and verifiable by the tax agency. Cuadra turns a sentence into a compliant invoice and collects it with PayPal.
+Small businesses lose hours writing invoices, chasing late payers and preparing their quarterly VAT, and in Spain the rules are changing: from 1 January 2027 for companies and 1 July 2027 for the self-employed, every invoicing system must produce **VeriFactu** records, tamper-evident and verifiable by the tax agency. Software that does not comply can be fined up to €50,000 a year.
+
+Cuadra turns a sentence into a compliant invoice, collects it with PayPal, chases whoever has not paid and drafts the quarterly VAT return. The same engine is an **MCP server**, so any AI agent can invoice and get paid through it.
 
 ## What it does
 
-1. **Ask.** "Invoice Acme Studio SL for 3 hours of consulting at €60." The agent drafts the invoice, checks the NIF and the VAT rate, and waits for confirmation. It never issues anything on its own.
-2. **Comply.** Each confirmed invoice becomes a VeriFactu record: a SHA-256 hash chained to the previous record, the AEAT verification QR and the RegistroAlta XML. Alter or delete any issued record and the chain breaks. Try the **Tamper test** button.
-3. **Collect.** PayPal Invoicing sends the invoice, with its tax-agency verification link, and collects. Status, reminders and paid totals sync back to the ledger, and the agent answers questions like "How much VAT have I charged this quarter?".
+| | You say | Cuadra does |
+|---|---|---|
+| **Invoice** | "Invoice Acme Studio SL for 3 hours of consulting at €60" | Drafts the invoice, reuses the client's NIF and email from earlier invoices, checks the NIF and the VAT rate, and waits for your confirmation. |
+| **Comply** | (on confirm) | Issues a VeriFactu record: SHA-256 hash chained to the previous record, AEAT verification QR and RegistroAlta XML. |
+| **Collect** | (on confirm) | Sends a PayPal invoice that carries the tax-agency verification link. Status and payments sync back. |
+| **Chase** | "Chase every overdue invoice" | One proposal per late invoice: a PayPal reminder if it is on PayPal, or a PayPal invoice if the client still owes you by transfer. |
+| **Reconcile** | "Hotel Mirador paid by bank transfer" | Finds the invoice and records the payment, in PayPal too. |
+| **Correct** | "Annul the duplicate invoice" | Cancels it in PayPal and appends a VeriFactu cancellation record (RegistroAnulacion). Nothing is ever edited or deleted. Paid invoices are refused: they need a corrective invoice. |
+| **Declare** | "Prepare my VAT return" | Modelo 303 draft for the quarter that is due (boxes 01–09 and 27) with the days left to file, computed from the ledger, never by the model. |
+| **Delegate** | Any MCP client | Claude, ChatGPT, Cursor or your own agent can do all of the above through the Cuadra MCP server. |
+
+The app opens on a sample quarter (paid, overdue and open invoices plus one cancelled duplicate), so every feature can be tried in the first minute. The **Tamper test** button alters an issued amount and shows the chain breaking at that record.
 
 ## How it works
 
 ```
-browser ledger ──► /api/agent  ── Gemini (tool calling) ──► proposals: propose_invoice · propose_reminder
-      │                                                         │ user confirms
-      ├─ VeriFactu engine (WebCrypto SHA-256 chain, QR, XML) ◄──┘
-      └──► /api/paypal ── PayPal Invoicing v2: create · send · status · remind
+                      ┌────────────── browser ──────────────┐
+ "Invoice Acme…" ───► │ chat · ledger · VAT card · pricing  │
+                      │ VeriFactu engine (WebCrypto SHA-256)│◄── verifies the chain on every render
+                      └──────┬──────────────────┬───────────┘
+                             │ /api/agent       │ /api/paypal (HMAC-bound to the session)
+                             ▼                  ▼
+            Gemini tool calling          PayPal REST
+            proposals only:              Invoicing v2: create · send · status · remind · cancel · payments
+            invoice · reminder · collect Subscriptions v1: Cuadra's own plans
+            mark paid · cancel · VAT     OAuth 2.0 client credentials (server-side only)
+
+ MCP client (Claude, ChatGPT…) ──stdio──► mcp/server.js ──► same engine + PayPal client ──► ~/.cuadra/ledger.json
 ```
 
-- The VeriFactu hash reproduces the official AEAT example byte for byte; it is covered by `npm test`.
-- Totals are recomputed and validated server-side: Spanish VAT rates only, valid NIF/CIF/NIE, sane amounts.
+- **The model proposes, the user decides.** The agent can only return proposals. Every fiscal or payment action needs a click in the UI, or the approval prompt of the MCP client.
+- **Numbers never come from the model.** Totals, VAT breakdowns and the Modelo 303 boxes are computed by the engine; the server recomputes and validates every invoice before PayPal sees it.
+- **One isomorphic engine.** `public/js/verifactu.js` and `public/js/ledger.js` run unchanged in the browser, in the API and in the MCP server.
+
+### Data model
+
+Every record lives in one append-only array, the hash chain. Two kinds of record:
+
+| Record | Hashed fields (AEAT order) | Other fields |
+|---|---|---|
+| `RegistroAlta` (invoice) | `IDEmisorFactura`, `NumSerieFactura`, `FechaExpedicionFactura`, `TipoFactura`, `CuotaTotal`, `ImporteTotal`, previous `Huella`, `FechaHoraHusoGenRegistro` | recipient, lines, VAT breakdown, QR URL, due date, PayPal id and status, payment date |
+| `RegistroAnulacion` (`kind: "anulacion"`) | `IDEmisorFacturaAnulada`, `NumSerieFacturaAnulada`, `FechaExpedicionFacturaAnulada`, previous `Huella`, `FechaHoraHusoGenRegistro` | reason |
+
+`verifyChain` checks that each record links to the previous hash, rehashes to itself, matches its invoice lines, and that a cancellation points to an earlier, not yet cancelled invoice. Status (paid, overdue, cancelled) is derived from the records, never stored as truth. In the web demo the ledger is kept in the browser; the MCP server keeps it in a JSON file written atomically and verified before every change.
+
+### VeriFactu details
+
+- The invoice hash and the cancellation hash both reproduce the **official AEAT examples byte for byte** (`npm test`).
+- QR URLs follow the AEAT verification service format (test environment in the demo).
+- XML follows the `SuministroInformacion` schema: `RegistroAlta` with `Desglose` per rate (0% lines as exempt operations, `E1`), `RegistroAnulacion`, `Encadenamiento` and `SistemaInformatico`.
+- Not done here: the electronic signature and submission to the AEAT web service, which a certified deployment adds.
+
+## Cuadra for AI agents (MCP)
+
+`mcp/server.js` is a zero-dependency MCP server over stdio. Add it to any MCP client:
+
+```json
+{
+  "mcpServers": {
+    "cuadra": {
+      "command": "node",
+      "args": ["/path/to/cuadra/mcp/server.js"],
+      "env": {
+        "CUADRA_NAME": "Estudio Norte SL", "CUADRA_NIF": "B76543214",
+        "PAYPAL_CLIENT_ID": "…", "PAYPAL_CLIENT_SECRET": "…"
+      }
+    }
+  }
+}
+```
+
+| Tool | What it does | Annotations |
+|---|---|---|
+| `draft_invoice` | Validates and totals an invoice, issues nothing | read-only |
+| `issue_invoice` | Appends a RegistroAlta and sends it with PayPal | |
+| `list_invoices` | Invoices with status, due date, PayPal link; summary and known clients | read-only |
+| `sync_paypal` | Refreshes PayPal statuses of open invoices | idempotent |
+| `collect_with_paypal` | Sends an issued invoice through PayPal | |
+| `send_reminder` | PayPal payment reminder | |
+| `record_payment` | Marks a transfer or cash payment, in PayPal too | idempotent |
+| `cancel_invoice` | PayPal cancel + RegistroAnulacion | destructive |
+| `vat_return` | Modelo 303 draft and days to the deadline | read-only |
+| `verify_ledger` | Checks the whole hash chain | read-only |
+| `export_verifactu_xml` | RegistroAlta / RegistroAnulacion XML | read-only |
+
+The server tells the client to draft before issuing and never to compute VAT figures itself. If the ledger file is edited by hand, `verify_ledger` reports where, and every tool that writes refuses to run.
+
+## PayPal integration
+
+| PayPal API | Used for |
+|---|---|
+| OAuth 2.0 client credentials | Server-side token, cached until expiry. Credentials never reach the browser. |
+| Invoicing v2 `POST /invoices`, `/send` | Issue and deliver the invoice, with the VeriFactu verification link in the note |
+| Invoicing v2 `GET /invoices/{id}` | Status, payer page and paid amount |
+| Invoicing v2 `/remind` | Payment reminders from the collections agent |
+| Invoicing v2 `/cancel` | Cancellation paired with the VeriFactu RegistroAnulacion |
+| Invoicing v2 `/payments` | Record a bank transfer or cash payment so PayPal and the ledger agree |
+| Catalog Products v1, Billing Plans v1 | Cuadra's own Autónomo and Gestoría plans (`npm run paypal:setup`) |
+| Subscriptions v1 | Subscribe from the pricing section; status checked on return |
+
+## Business model
+
+| Plan | Price | For |
+|---|---|---|
+| Free | €0 | 10 invoices a month, VeriFactu records, PayPal collection, AI agent with fair use |
+| Autónomo | €9 / month + VAT | Unlimited invoices, collections agent, Modelo 303 draft, MCP access |
+| Gestoría | €29 / month + VAT | Up to 10 companies (NIFs), accountant access and exports |
+
+- **Market.** More than 3 million self-employed workers and over a million companies in Spain must use VeriFactu-compliant software by July 2027. Many invoice from spreadsheets or Word today.
+- **Why they pay.** Compliance becomes mandatory and the fines are large; getting paid faster is the reason they keep paying. Cuadra never takes a cut of payments.
+- **Unit economics (estimates).** An agent turn is about 3k input and 300 output tokens on Gemini Flash-Lite, well under €0.001. PayPal's fee on a €9 subscription is roughly €0.60. Hosting is static files plus two small functions. Gross margin stays around 90%.
+- **Distribution.** PayPal merchants in Spain, gestorías that resell to their clients, and AI agents that need a compliant way to bill (MCP).
 
 ## Security and governance
 
-- Human in the loop for every fiscal action; the agent only proposes.
+- Human in the loop for every fiscal or payment action; the agent only proposes.
 - PayPal and Gemini credentials live only in server environment variables.
-- Every PayPal invoice is bound to the session that created it with an HMAC token, so no one can read or chase another session's invoices.
+- Every PayPal invoice and subscription is bound to the browser session that created it with an HMAC token: nobody can read, chase, cancel or mark paid another session's invoices.
+- Server-side validation of every invoice: Spanish VAT rates only, valid NIF/CIF/NIE, bounded quantities and prices, totals recomputed.
 - Strict Content-Security-Policy, no third-party scripts: Tailwind is compiled and the QR library is vendored from the npm registry with its integrity verified.
-- Same-origin checks, JSON-only endpoints, per-IP rate limits, generic user-facing errors and redacted server logs.
-- Demo data stays in the browser. CSV exports are protected against formula injection.
+- Same-origin checks, JSON-only endpoints, per-IP rate limits, bounded request bodies, generic user-facing errors and redacted server logs.
+- Model output is escaped before rendering; ledger data and chat history are passed to the model as data, never as instructions.
+- CSV exports are protected against formula injection.
 
-## Run locally
+## Run it
 
 ```bash
 cp .env.example .env    # GEMINI_API_KEY, PAYPAL_CLIENT_ID, PAYPAL_CLIENT_SECRET (Sandbox)
-npm test                # offline: engine, QR and API security checks
+npm test                # offline: engine, AEAT examples, ledger, API security, MCP end to end
 npm run dev             # http://localhost:3000
+MOCK=1 npm run dev      # no keys at all: deterministic agent and in-memory PayPal
+npm run paypal:setup    # once: creates the subscription plans, prints PAYPAL_PLAN_PRO / PAYPAL_PLAN_TEAM
+npm run mcp             # the MCP server on stdio
+```
+
+No dependencies to install: Node 20 or later is enough.
+
+**Deploy.** Vercel serves `public/` and the functions in `api/` as is (`vercel.json` sets the security headers). Render uses `render.yaml`: `npm test` gates the build, `npm start` serves the app, and `/api/health` is the health check.
+
+```
+api/        agent.js · paypal.js · health.js       serverless functions
+lib/        agent, LLM client, PayPal client, validation, request guard
+public/     index.html · app.js · js/verifactu.js · js/ledger.js · vendored QR
+mcp/        server.js                                MCP server (stdio)
+scripts/    test.js · mcp-test.js · paypal-setup.js
 ```
 
 ## Status
 
-Demo on PayPal Sandbox and the AEAT test verification service. Not a certified invoicing system. The QR library is qrcode-generator 1.4.4 (MIT).
+Demo on PayPal Sandbox and the AEAT test verification service. Not a certified invoicing system: a production deployment adds the electronic signature, submission to the AEAT and server-side storage. The QR library is qrcode-generator 1.4.4 (MIT).
 
 ## License
 
