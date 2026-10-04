@@ -1,13 +1,21 @@
 {
   "name": "cuadra",
-  "version": "0.1.0",
-  "description": "AI invoicing agent for PayPal merchants: invoices from plain language, VeriFactu-ready tamper-evident records, collection with PayPal.",
+  "version": "0.2.0",
+  "description": "AI invoicing agent for PayPal merchants: invoices from plain language, VeriFactu-ready tamper-evident records, collection with PayPal, quarterly VAT draft, and an MCP server for any AI agent.",
   "type": "module",
   "license": "MIT",
   "scripts": {
     "dev": "node dev-server.js",
-    "test": "node scripts/test.js",
+    "start": "node dev-server.js",
+    "mcp": "node mcp/server.js",
+    "test": "node scripts/test.js && node scripts/mcp-test.js",
+    "paypal:setup": "node scripts/paypal-setup.js",
     "build:css": "npx -y tailwindcss@3 -c tailwind.config.cjs -i styles/input.css -o public/styles.css --minify"
   },
-  "engines": { "node": ">=20" }
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "cuadra-mcp": "mcp/server.js"
+  }
 }

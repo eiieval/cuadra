@@ -113,7 +113,8 @@ expect('agent shows the VAT return instead of computing figures', vatAsk.json?.a
 let last = 0;
 for (let i = 0; i < 21; i++) last = (await call(agent, { headers: { 'x-forwarded-for': '9.9.9.9' }, body: {} })).status;
 expect('per-IP rate limit kicks in (429)', last === 429);
-delete process.env.MOCK;
+// Simulate an outage even where real credentials exist (e.g. a Render build with env vars set).
+for (const k of ['MOCK', 'MOCK_PAYPAL', 'PAYPAL_CLIENT_ID', 'PAYPAL_CLIENT_SECRET']) delete process.env[k];
 const origError = console.error;
 console.error = () => {};
 const down = await call(paypal, { headers: { 'x-forwarded-for': '3.3.3.3' }, body: { op: 'create_and_send', invoice: good } });

@@ -1,0 +1,27 @@
+# Render Blueprint: one zero-dependency Node web service. The offline test suite gates every deploy.
+services:
+  - type: web
+    name: cuadra
+    runtime: node
+    plan: free
+    buildCommand: npm test
+    startCommand: npm start
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: PAYPAL_ENV
+        value: sandbox
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: PAYPAL_CLIENT_ID
+        sync: false
+      - key: PAYPAL_CLIENT_SECRET
+        sync: false
+      - key: PAYPAL_PLAN_PRO
+        sync: false
+      - key: PAYPAL_PLAN_TEAM
+        sync: false
+      - key: PUBLIC_URL
+        sync: false
