@@ -4,35 +4,40 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Cuadra · AI invoicing for PayPal merchants</title>
-  <meta name="description" content="Cuadra is an AI invoicing agent for PayPal merchants: invoices from plain language, VeriFactu-ready records with tamper-evident hash chains, and collection with PayPal.">
+  <meta name="description" content="Cuadra is an AI invoicing agent for PayPal merchants: invoices from plain language, VeriFactu-ready records with tamper-evident hash chains, collection with PayPal and a quarterly VAT draft.">
+  <meta name="theme-color" content="#06070b">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/styles.css">
   <script src="/vendor/qrcode/qrcode.js"></script>
 </head>
 <body class="bg-[#06070b] text-slate-100 min-h-screen">
+  <a href="#msg" class="sr-only focus:not-sr-only focus:absolute focus:left-2 focus:top-2 focus:rounded focus:bg-white focus:px-2 focus:py-1 focus:text-black">Skip to the agent</a>
   <header class="max-w-7xl mx-auto px-4 pt-6 pb-4 flex flex-wrap items-center gap-3">
-    <div class="h-9 w-9 rounded-xl bg-gradient-to-br from-indigo-500 to-emerald-400"></div>
+    <div class="h-9 w-9 rounded-xl bg-gradient-to-br from-indigo-500 to-emerald-400" aria-hidden="true"></div>
     <div>
       <div class="text-lg font-bold leading-none">Cuadra</div>
       <div class="text-xs text-slate-400">AI invoicing agent for PayPal merchants · VeriFactu-ready</div>
     </div>
-    <div class="ml-auto flex flex-wrap items-center gap-2 text-xs">
+    <nav class="ml-auto flex flex-wrap items-center gap-2 text-xs" aria-label="Demo controls">
       <span id="company" class="text-slate-400"></span>
-      <button id="reset" class="btn-ghost">Reset demo</button>
-    </div>
+      <a href="#pricing" id="plan" class="badge hover:bg-white/20">Free plan</a>
+      <button id="sample" class="btn-ghost">Sample quarter</button>
+      <button id="reset" class="btn-ghost">Start empty</button>
+    </nav>
   </header>
 
   <main class="max-w-7xl mx-auto px-4 pb-10 grid gap-5 lg:grid-cols-[420px_1fr]">
-    <section class="glass rounded-2xl flex flex-col h-[78vh] min-h-[520px]">
+    <section class="glass rounded-2xl flex flex-col h-[78vh] min-h-[520px] lg:sticky lg:top-4" aria-label="Agent">
       <div class="px-4 pt-4 pb-2 flex items-center gap-2">
         <span class="text-sm font-semibold">Agent</span>
         <span class="text-[11px] text-slate-500">proposes, you confirm</span>
       </div>
-      <div id="chat" class="flex-1 overflow-y-auto px-4 space-y-3"></div>
+      <div id="chat" class="flex-1 overflow-y-auto px-4 space-y-3" aria-live="polite"></div>
       <div id="examples" class="px-4 pt-2 flex flex-wrap gap-1.5"></div>
       <form id="ask" class="p-3 flex gap-2">
-        <input id="msg" maxlength="500" autocomplete="off" placeholder="Invoice Acme for 3 hours at €60…" class="field flex-1">
+        <input id="msg" maxlength="500" autocomplete="off" aria-label="Message to the agent" placeholder="Invoice Acme for 3 hours at €60…" class="field flex-1">
         <button class="btn-primary px-4">Send</button>
       </form>
     </section>
@@ -42,9 +47,9 @@
       <div class="glass rounded-2xl p-4">
         <div class="flex flex-wrap items-center gap-3">
           <h2 class="font-semibold">Invoices</h2>
-          <div id="chain" class="text-xs"></div>
+          <div id="chain" class="text-xs" aria-live="polite"></div>
           <div class="ml-auto flex flex-wrap gap-2">
-            <button id="tamper" class="btn-ghost">Tamper test</button>
+            <button id="tamper" class="btn-ghost" title="Alter an issued amount and watch the chain break">Tamper test</button>
             <button id="xml" class="btn-ghost">Export XML</button>
             <button id="csv" class="btn-ghost">Export CSV</button>
           </div>
@@ -52,22 +57,89 @@
         <div class="mt-3 overflow-x-auto">
           <table class="w-full text-sm">
             <thead class="text-left text-xs text-slate-400">
-              <tr><th class="py-2 pr-2">Number</th><th class="pr-2">Client</th><th class="pr-2 text-right">Total</th><th class="pr-2">PayPal</th><th class="pr-2">VeriFactu hash</th><th></th></tr>
+              <tr><th class="py-2 pr-2">Number</th><th class="pr-2">Client</th><th class="pr-2 text-right">Total</th><th class="pr-2">Status</th><th class="pr-2 hidden sm:table-cell">Due</th><th class="pr-2 hidden md:table-cell">VeriFactu hash</th><th><span class="sr-only">Actions</span></th></tr>
             </thead>
             <tbody id="rows"></tbody>
           </table>
         </div>
       </div>
-      <div class="glass rounded-2xl p-4 text-xs text-slate-400 leading-relaxed grid gap-3 md:grid-cols-3">
-        <div><div class="text-slate-200 font-semibold mb-1">1 · Ask</div>Describe the sale in plain English or Spanish. The agent drafts the invoice and checks NIF and VAT. Nothing is issued until you confirm.</div>
-        <div><div class="text-slate-200 font-semibold mb-1">2 · Comply</div>Each invoice becomes a VeriFactu record: SHA-256 hash chained to the previous one, AEAT verification QR and RegistroAlta XML. Edit any issued record and the chain breaks.</div>
-        <div><div class="text-slate-200 font-semibold mb-1">3 · Collect</div>PayPal Invoicing sends it and collects. Status, reminders and paid totals sync back to your ledger.</div>
+
+      <div class="grid gap-5 xl:grid-cols-[1fr_1fr]">
+        <div id="vat" class="glass rounded-2xl p-4">
+          <div class="flex flex-wrap items-center gap-2">
+            <h2 class="font-semibold">VAT return draft</h2>
+            <span class="text-xs text-slate-400">Modelo 303 · <span id="vatQ"></span></span>
+            <div class="ml-auto flex gap-1">
+              <button id="vatPrev" class="btn-ghost" aria-label="Previous quarter">‹</button>
+              <button id="vatNext" class="btn-ghost" aria-label="Next quarter">›</button>
+              <button id="vatCsv" class="btn-ghost">CSV</button>
+            </div>
+          </div>
+          <div id="vatBody" class="mt-2"></div>
+        </div>
+        <div class="glass rounded-2xl p-4 text-xs text-slate-400 leading-relaxed space-y-3">
+          <div><div class="text-slate-200 font-semibold mb-1">1 · Ask</div>Describe the sale in plain English or Spanish. The agent drafts the invoice, reuses known clients and checks NIF and VAT. Nothing happens until you confirm.</div>
+          <div><div class="text-slate-200 font-semibold mb-1">2 · Comply</div>Every invoice and every cancellation is a VeriFactu record: SHA-256 hash chained to the previous one, AEAT verification QR and XML. Records are never edited, only appended.</div>
+          <div><div class="text-slate-200 font-semibold mb-1">3 · Collect</div>PayPal Invoicing sends it with its tax-agency link and collects. The agent chases late payers, records transfers and drafts your quarterly VAT.</div>
+        </div>
       </div>
     </section>
   </main>
 
-  <dialog id="dlg"><div id="dlgBody"></div></dialog>
-  <footer class="text-center text-[11px] text-slate-500 pb-8 px-4">Demo on PayPal Sandbox and the AEAT test QR service. Records stay in your browser. Not a certified invoicing system.</footer>
+  <section id="pricing" class="max-w-7xl mx-auto px-4 pb-10" aria-labelledby="pricing-title">
+    <div class="glass rounded-2xl p-5">
+      <div class="flex flex-wrap items-end gap-3">
+        <div>
+          <h2 id="pricing-title" class="text-lg font-semibold">Pricing</h2>
+          <p class="text-xs text-slate-400 max-w-2xl">VeriFactu-compliant invoicing software is mandatory in Spain from 2027, and non-compliant software can be fined up to €50,000 a year. Cuadra never takes a cut of your payments: PayPal charges its usual fees on what you collect.</p>
+        </div>
+        <span class="ml-auto text-[11px] text-slate-500">Prices before 21% VAT · billed monthly with PayPal Subscriptions · cancel any time</span>
+      </div>
+      <div class="mt-4 grid gap-4 md:grid-cols-3">
+        <div class="rounded-xl border border-white/10 p-4">
+          <div class="text-sm font-semibold">Free</div>
+          <div class="mt-1 text-2xl font-bold">€0</div>
+          <ul class="mt-3 space-y-1 text-xs text-slate-300"><li>10 invoices a month</li><li>VeriFactu records, QR and XML</li><li>Collect with PayPal</li><li>AI agent, fair use</li></ul>
+          <div class="mt-4 text-[11px] text-slate-500">For trying Cuadra and occasional freelancers.</div>
+        </div>
+        <div class="rounded-xl border border-indigo-300/40 bg-indigo-400/5 p-4">
+          <div class="flex items-center gap-2"><div class="text-sm font-semibold">Autónomo</div><span class="badge badge-ok">Most popular</span></div>
+          <div class="mt-1 text-2xl font-bold">€9<span class="text-sm font-normal text-slate-400"> / month</span></div>
+          <ul class="mt-3 space-y-1 text-xs text-slate-300"><li>Unlimited invoices and clients</li><li>Collections agent: reminders, payments, cancellations</li><li>Quarterly Modelo 303 draft</li><li>MCP access for your own AI agents</li></ul>
+          <button class="btn-primary mt-4 w-full" data-plan="pro" data-label="Subscribe with PayPal">Subscribe with PayPal</button>
+        </div>
+        <div class="rounded-xl border border-white/10 p-4">
+          <div class="text-sm font-semibold">Gestoría</div>
+          <div class="mt-1 text-2xl font-bold">€29<span class="text-sm font-normal text-slate-400"> / month</span></div>
+          <ul class="mt-3 space-y-1 text-xs text-slate-300"><li>Everything in Autónomo</li><li>Up to 10 companies (NIFs)</li><li>Accountant access and exports</li><li>Priority support</li></ul>
+          <button class="btn-ghost mt-4 w-full !py-1.5" data-plan="team" data-label="Subscribe with PayPal">Subscribe with PayPal</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="agents" class="max-w-7xl mx-auto px-4 pb-10" aria-labelledby="agents-title">
+    <div class="glass rounded-2xl p-5 grid gap-4 md:grid-cols-[1fr_1.2fr]">
+      <div>
+        <h2 id="agents-title" class="text-lg font-semibold">Cuadra for AI agents</h2>
+        <p class="mt-1 text-xs leading-relaxed text-slate-400">The same engine ships as an MCP server. Claude, ChatGPT or any MCP client can draft, issue and collect VeriFactu invoices with PayPal, chase payments and draft the VAT return, while your MCP client asks you to approve every action. Same validation, same hash chain, your own PayPal account.</p>
+      </div>
+      <pre class="overflow-x-auto rounded-xl bg-black/40 p-3 text-[11px] leading-relaxed text-slate-300"><code>{
+  "mcpServers": {
+    "cuadra": {
+      "command": "node",
+      "args": ["/path/to/cuadra/mcp/server.js"],
+      "env": { "CUADRA_NIF": "B76543214", "CUADRA_NAME": "Estudio Norte SL",
+               "PAYPAL_CLIENT_ID": "…", "PAYPAL_CLIENT_SECRET": "…" }
+    }
+  }
+}</code></pre>
+    </div>
+  </section>
+
+  <div id="toast" role="status" aria-live="polite" class="hidden fixed bottom-4 left-1/2 z-50 w-[min(92vw,520px)] -translate-x-1/2 rounded-xl border border-white/15 bg-[#11131c] px-4 py-3 text-sm shadow-2xl"></div>
+  <dialog id="dlg" aria-label="Record detail"><div id="dlgBody"></div></dialog>
+  <footer class="text-center text-[11px] text-slate-500 pb-8 px-4">Demo on PayPal Sandbox and the AEAT test QR service. Records stay in your browser. Not a certified invoicing system. <a class="underline" href="https://github.com/eiieval/cuadra" target="_blank" rel="noopener noreferrer">Source code</a></footer>
   <script type="module" src="/app.js"></script>
 </body>
 </html>

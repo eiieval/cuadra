@@ -17,5 +17,7 @@ body { font-family: Inter, system-ui, sans-serif; }
 .badge-ok { @apply bg-emerald-500/15 text-emerald-300; }
 .badge-warn { @apply bg-amber-400/15 text-amber-200; }
 .badge-bad { @apply bg-rose-500/15 text-rose-300; }
+.badge-mute { @apply bg-white/5 text-slate-400; }
+.box { @apply mr-1 inline-block rounded bg-white/10 px-1 align-middle font-mono text-[9px] leading-4 text-slate-300; }
 dialog { background: #0d0f16; color: #e2e8f0; border: 1px solid rgba(255,255,255,.1); border-radius: 1rem; padding: 1.25rem; width: min(920px, calc(100vw - 2rem)); }
 dialog::backdrop { background: rgba(0,0,0,.65); }
