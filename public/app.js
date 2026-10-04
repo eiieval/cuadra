@@ -5,6 +5,8 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 const eur = (n) => new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR' }).format(Number(n) || 0);
 const isoToday = () => new Date().toLocaleDateString('sv-SE');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// Minimal, safe formatting for agent replies: escape first, then only add <b> and bullet glyphs.
+const md = (s) => esc(s).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/^\s*[*-]\s+/gm, '• ').replace(/(^|\s)\*([^*\n]+)\*(?=\s|$|[.,;:])/g, '$1$2');
 const safeUrl = (u) => (/^https:\/\/www\.(sandbox\.)?paypal\.com\//.test(String(u || '')) ? u : null);
 
 const KEY = 'cuadra-demo-v1';
@@ -138,7 +140,7 @@ function renderChat() {
   $('#chat').innerHTML = state.chat.length
     ? state.chat.map((m, mi) => (m.role === 'user'
       ? `<div class="flex justify-end"><div class="bubble-user">${esc(m.text)}</div></div>`
-      : `<div class="space-y-2"><div class="bubble-agent">${esc(m.text)}</div>${(m.actions || []).map((a, ai) => actionCard(a, mi, ai)).join('')}</div>`)).join('')
+      : `<div class="space-y-2"><div class="bubble-agent">${md(m.text)}</div>${(m.actions || []).map((a, ai) => actionCard(a, mi, ai)).join('')}</div>`)).join('')
     : '<div class="pt-2 text-sm leading-relaxed text-slate-400">Tell me who to invoice and for what, in English or Spanish. I draft the invoice, you confirm it, and Cuadra issues a VeriFactu record and collects it with PayPal.</div>';
   $('#chat').scrollTop = $('#chat').scrollHeight;
 }
