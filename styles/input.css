@@ -1,0 +1,21 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body { font-family: Inter, system-ui, sans-serif; }
+.font-mono { font-family: 'JetBrains Mono', ui-monospace, monospace; }
+.glass { background: rgba(255,255,255,.035); border: 1px solid rgba(255,255,255,.08); }
+.field { min-width: 0; width: 100%; background: rgba(0,0,0,.35); border: 1px solid rgba(255,255,255,.1); border-radius: .75rem; padding: .6rem .8rem; outline: none; color: #f1f5f9; }
+.field:focus { border-color: rgba(129,140,248,.7); }
+.btn-primary { @apply rounded-lg bg-white px-3 py-1.5 text-xs font-semibold text-black hover:bg-indigo-100 disabled:opacity-50; }
+.btn-ghost { @apply rounded-lg border border-white/15 px-2.5 py-1 text-xs text-slate-200 hover:border-white/40 disabled:opacity-50; }
+.chip { @apply rounded-full border border-white/10 px-2.5 py-1 text-left text-[11px] text-slate-300 hover:border-white/40; }
+.card { @apply rounded-xl border border-indigo-300/20 bg-indigo-400/5 p-3; }
+.bubble-user { @apply max-w-[85%] rounded-2xl rounded-br-sm border border-indigo-400/20 bg-indigo-500/20 px-3 py-2 text-sm; }
+.bubble-agent { @apply max-w-[92%] whitespace-pre-wrap rounded-2xl rounded-bl-sm border border-white/10 bg-white/5 px-3 py-2 text-sm; }
+.badge { @apply inline-block rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-300; }
+.badge-ok { @apply bg-emerald-500/15 text-emerald-300; }
+.badge-warn { @apply bg-amber-400/15 text-amber-200; }
+.badge-bad { @apply bg-rose-500/15 text-rose-300; }
+dialog { background: #0d0f16; color: #e2e8f0; border: 1px solid rgba(255,255,255,.1); border-radius: 1rem; padding: 1.25rem; width: min(920px, calc(100vw - 2rem)); }
+dialog::backdrop { background: rgba(0,0,0,.65); }

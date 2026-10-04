@@ -1,0 +1,13 @@
+{
+  "name": "cuadra",
+  "version": "0.1.0",
+  "description": "AI invoicing agent for PayPal merchants: invoices from plain language, VeriFactu-ready tamper-evident records, collection with PayPal.",
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "dev": "node dev-server.js",
+    "test": "node scripts/test.js",
+    "build:css": "npx -y tailwindcss@3 -c tailwind.config.cjs -i styles/input.css -o public/styles.css --minify"
+  },
+  "engines": { "node": ">=20" }
+}

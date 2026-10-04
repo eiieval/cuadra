@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cuadra · AI invoicing for PayPal merchants</title>
+  <meta name="description" content="Cuadra is an AI invoicing agent for PayPal merchants: invoices from plain language, VeriFactu-ready records with tamper-evident hash chains, and collection with PayPal.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/vendor/qrcode/qrcode.js"></script>
+</head>
+<body class="bg-[#06070b] text-slate-100 min-h-screen">
+  <header class="max-w-7xl mx-auto px-4 pt-6 pb-4 flex flex-wrap items-center gap-3">
+    <div class="h-9 w-9 rounded-xl bg-gradient-to-br from-indigo-500 to-emerald-400"></div>
+    <div>
+      <div class="text-lg font-bold leading-none">Cuadra</div>
+      <div class="text-xs text-slate-400">AI invoicing agent for PayPal merchants · VeriFactu-ready</div>
+    </div>
+    <div class="ml-auto flex flex-wrap items-center gap-2 text-xs">
+      <span id="company" class="text-slate-400"></span>
+      <button id="reset" class="btn-ghost">Reset demo</button>
+    </div>
+  </header>
+
+  <main class="max-w-7xl mx-auto px-4 pb-10 grid gap-5 lg:grid-cols-[420px_1fr]">
+    <section class="glass rounded-2xl flex flex-col h-[78vh] min-h-[520px]">
+      <div class="px-4 pt-4 pb-2 flex items-center gap-2">
+        <span class="text-sm font-semibold">Agent</span>
+        <span class="text-[11px] text-slate-500">proposes, you confirm</span>
+      </div>
+      <div id="chat" class="flex-1 overflow-y-auto px-4 space-y-3"></div>
+      <div id="examples" class="px-4 pt-2 flex flex-wrap gap-1.5"></div>
+      <form id="ask" class="p-3 flex gap-2">
+        <input id="msg" maxlength="500" autocomplete="off" placeholder="Invoice Acme for 3 hours at €60…" class="field flex-1">
+        <button class="btn-primary px-4">Send</button>
+      </form>
+    </section>
+
+    <section class="space-y-5 min-w-0">
+      <div id="kpis" class="grid gap-3 grid-cols-2 xl:grid-cols-4"></div>
+      <div class="glass rounded-2xl p-4">
+        <div class="flex flex-wrap items-center gap-3">
+          <h2 class="font-semibold">Invoices</h2>
+          <div id="chain" class="text-xs"></div>
+          <div class="ml-auto flex flex-wrap gap-2">
+            <button id="tamper" class="btn-ghost">Tamper test</button>
+            <button id="xml" class="btn-ghost">Export XML</button>
+            <button id="csv" class="btn-ghost">Export CSV</button>
+          </div>
+        </div>
+        <div class="mt-3 overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead class="text-left text-xs text-slate-400">
+              <tr><th class="py-2 pr-2">Number</th><th class="pr-2">Client</th><th class="pr-2 text-right">Total</th><th class="pr-2">PayPal</th><th class="pr-2">VeriFactu hash</th><th></th></tr>
+            </thead>
+            <tbody id="rows"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="glass rounded-2xl p-4 text-xs text-slate-400 leading-relaxed grid gap-3 md:grid-cols-3">
+        <div><div class="text-slate-200 font-semibold mb-1">1 · Ask</div>Describe the sale in plain English or Spanish. The agent drafts the invoice and checks NIF and VAT. Nothing is issued until you confirm.</div>
+        <div><div class="text-slate-200 font-semibold mb-1">2 · Comply</div>Each invoice becomes a VeriFactu record: SHA-256 hash chained to the previous one, AEAT verification QR and RegistroAlta XML. Edit any issued record and the chain breaks.</div>
+        <div><div class="text-slate-200 font-semibold mb-1">3 · Collect</div>PayPal Invoicing sends it and collects. Status, reminders and paid totals sync back to your ledger.</div>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="dlg"><div id="dlgBody"></div></dialog>
+  <footer class="text-center text-[11px] text-slate-500 pb-8 px-4">Demo on PayPal Sandbox and the AEAT test QR service. Records stay in your browser. Not a certified invoicing system.</footer>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
