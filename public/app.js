@@ -143,6 +143,24 @@ async function sendWithPaypal(rec) {
   return error ? `PayPal failed for ${rec.number}: ${error}` : `${rec.number} sent with PayPal. The client can pay online now.`;
 }
 
+// Pull PayPal statuses for open invoices: on load and when the tab regains focus, at most once a minute.
+let lastSync = 0;
+async function syncPaypal() {
+  if (Date.now() - lastSync < 60000 || tampered) return;
+  lastSync = Date.now();
+  const due = invoicesOf(state.records).filter((r) => r.paypal?.id && OPEN(status(r))).slice(-5);
+  let changed = 0;
+  for (const rec of due) {
+    const r = await post('/api/paypal', { op: 'status', id: rec.paypal.id, token: rec.paypal.token });
+    if (r.error || r.status === rec.paypal.status) continue;
+    Object.assign(rec.paypal, { status: r.status, payerUrl: safeUrl(r.payerUrl) || rec.paypal.payerUrl });
+    changed++;
+    if (status(rec) === 'PAID') toast(`${rec.number} was paid with PayPal.`);
+  }
+  if (changed) { save(); await renderAll(); }
+}
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') syncPaypal(); });
+
 async function remind(rec) {
   if (!rec.paypal?.id) return `${rec.number} is not on PayPal yet. Send it with PayPal first.`;
   const r = await post('/api/paypal', { op: 'remind', id: rec.paypal.id, token: rec.paypal.token });
@@ -277,7 +295,7 @@ function renderInvoices() {
       <td class="pr-2">${esc(r.recipient?.name)}${r.sample ? ' <span class="text-[10px] text-slate-500">sample</span>' : ''}</td>
       <td class="pr-2 text-right tabular-nums whitespace-nowrap">${eur(r.total)}</td>
       <td class="pr-2"><span class="${BADGE[st] || 'badge'}" title="${esc(r.paypal?.error || (r.paypal?.id ? 'On PayPal' : ''))}">${esc(st.replace(/_/g, ' '))}</span>${r.paypal?.id ? ' <span class="text-[10px] text-indigo-300">PayPal</span>' : ''}</td>
-      <td class="pr-2 text-xs text-slate-400 whitespace-nowrap hidden sm:table-cell">${r.dueDate && OPEN(st) ? fmtDate(r.dueDate) : ''}</td>
+      <td class="pr-2 text-xs text-slate-400 whitespace-nowrap hidden sm:table-cell">${r.dueDate && OPEN(st) ? esc(fmtDate(r.dueDate)) : ''}</td>
       <td class="pr-2 font-mono text-[11px] text-slate-400 hidden md:table-cell" title="${esc(r.hash)}">${esc(r.hash.slice(0, 12))}…</td>
       <td class="text-right whitespace-nowrap space-x-1"><button class="btn-ghost" data-i="${i}" data-do="view">View</button>${refresh}${action}</td>
     </tr>`;
@@ -349,7 +367,7 @@ function openDetail(r) {
   } else {
     const st = status(r);
     const rows = (r.lines || []).map((l) => `<tr class="border-t border-black/10"><td class="py-1 pr-2">${esc(l.description)}</td><td class="pr-2 text-right">${l.qty}</td><td class="pr-2 text-right">${eur(l.price)}</td><td class="text-right">${l.vat}%</td></tr>`).join('');
-    const pay = r.paypal?.id ? `${esc(r.paypal.status)}${safeUrl(r.paypal.payerUrl) ? ` · <a class="text-indigo-300 underline" href="${esc(r.paypal.payerUrl)}" target="_blank" rel="noopener noreferrer">payer page</a>` : ''}` : r.paidAt ? `Paid by ${esc(METHOD[r.paidMethod] || 'transfer')} on ${fmtDate(r.paidAt)}` : 'Not on PayPal';
+    const pay = r.paypal?.id ? `${esc(r.paypal.status)}${safeUrl(r.paypal.payerUrl) ? ` · <a class="text-indigo-300 underline" href="${esc(r.paypal.payerUrl)}" target="_blank" rel="noopener noreferrer">payer page</a>` : ''}` : r.paidAt ? `Paid by ${esc(METHOD[r.paidMethod] || 'transfer')} on ${esc(fmtDate(r.paidAt))}` : 'Not on PayPal';
     const manage = OPEN(st) ? `<div class="space-y-2 rounded-lg border border-white/10 p-2"><div class="text-slate-400">Manage</div>
       <div class="flex flex-wrap gap-2"><select id="payMethod" class="field !w-auto !py-1 text-xs" aria-label="Payment method"><option value="BANK_TRANSFER">Bank transfer</option><option value="CASH">Cash</option><option value="OTHER">Other</option></select><button class="btn-ghost" data-dl="paid">Mark paid</button></div>
       <div class="flex flex-wrap gap-2"><input id="cancelReason" class="field !w-auto flex-1 !py-1 text-xs" maxlength="200" placeholder="Reason, e.g. duplicate" aria-label="Cancellation reason"><button class="btn-ghost text-rose-200" data-dl="cancel">Cancel invoice</button></div></div>` : '';
@@ -556,9 +574,35 @@ $('#examples').addEventListener('click', (ev) => {
   $('#ask').requestSubmit();
 });
 
+// Voice input where the browser supports it (Chrome, Edge, Safari): speak the sale, then review the proposal.
+const Speech = window.SpeechRecognition || window.webkitSpeechRecognition;
+if (Speech) {
+  const mic = $('#mic');
+  mic.classList.remove('hidden');
+  let rec = null;
+  mic.onclick = () => {
+    if (rec) return rec.stop();
+    rec = new Speech();
+    rec.lang = navigator.language?.startsWith('es') ? 'es-ES' : 'en-US';
+    rec.interimResults = true;
+    rec.onresult = (e) => { $('#msg').value = [...e.results].map((x) => x[0].transcript).join(' '); };
+    rec.onend = () => {
+      rec = null;
+      mic.classList.remove('btn-rec');
+      mic.setAttribute('aria-pressed', 'false');
+      if ($('#msg').value.trim()) $('#ask').requestSubmit();
+    };
+    rec.onerror = () => toast('Voice input is not available. Type instead.');
+    mic.classList.add('btn-rec');
+    mic.setAttribute('aria-pressed', 'true');
+    rec.start();
+  };
+}
+
 if (firstVisit) await loadSample();
 await renderAll();
 await checkSubscription();
+syncPaypal();
 
 // Local visual self-test (localhost only): plays the demo flow so a headless browser can screenshot it.
 if (location.hostname === 'localhost' && location.hash.startsWith('#selftest')) {
