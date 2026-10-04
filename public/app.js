@@ -143,10 +143,10 @@ async function sendWithPaypal(rec) {
   return error ? `PayPal failed for ${rec.number}: ${error}` : `${rec.number} sent with PayPal. The client can pay online now.`;
 }
 
-// Pull PayPal statuses for open invoices: on load and when the tab regains focus, at most once a minute.
+// Pull PayPal statuses for open invoices: on load and when the tab regains focus, at most every 30 seconds.
 let lastSync = 0;
 async function syncPaypal() {
-  if (Date.now() - lastSync < 60000 || tampered) return;
+  if (Date.now() - lastSync < 30000 || tampered) return;
   lastSync = Date.now();
   const due = invoicesOf(state.records).filter((r) => r.paypal?.id && OPEN(status(r))).slice(-5);
   let changed = 0;
