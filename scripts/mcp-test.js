@@ -3,13 +3,14 @@ import { spawn } from 'node:child_process';
 import { mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 let failed = 0;
 const expect = (label, ok) => { console.log(ok ? 'ok  ' : 'FAIL', label); if (!ok) failed++; };
 
 const dir = mkdtempSync(join(tmpdir(), 'cuadra-mcp-'));
 const ledgerPath = join(dir, 'ledger.json');
-const child = spawn(process.execPath, [new URL('../mcp/server.js', import.meta.url).pathname], {
+const child = spawn(process.execPath, [fileURLToPath(new URL('../mcp/server.js', import.meta.url))], {
   env: { PATH: process.env.PATH, MOCK_PAYPAL: '1', CUADRA_LEDGER: ledgerPath, CUADRA_NIF: 'B76543214', CUADRA_NAME: 'Estudio Norte SL', CUADRA_SERIES: 'MCP' },
   stdio: ['pipe', 'pipe', 'pipe'],
 });
