@@ -124,8 +124,8 @@ export async function buildSample({ issuer, today }) {
     { d: 20, to: { name: 'Lumen Foods SL', nif: 'B87654323', email: 'pagos@lumen.example' }, lines: [{ description: 'Label design', qty: 2, price: 250, vat: 21 }], paid: 9 },
     { d: 35, to: { name: 'Casa Verde S.Coop.', nif: 'F23456783', email: 'admin@casaverde.example' }, lines: [{ description: 'Printed cookbook copies', qty: 20, price: 18, vat: 4 }], paid: 14 },
     { d: 58, to: { name: 'Hotel Mirador SL', nif: 'B66112236', email: 'facturas@mirador.example' }, lines: [{ description: 'Catering, product launch', qty: 1, price: 900, vat: 10 }] },
-    { d: 76, to: { name: 'Marta Pardo', nif: '48291736Q', email: 'marta@pardo.example' }, lines: [{ description: 'Logo refresh', qty: 1, price: 600, vat: 21 }] },
-    { d: 83, to: { name: 'Marta Pardo', nif: '48291736Q', email: 'marta@pardo.example' }, lines: [{ description: 'Logo refresh', qty: 1, price: 600, vat: 21 }], duplicate: true },
+    { d: 76, to: { name: 'Marta Pardo', nif: '00000000T', email: 'marta@pardo.example' }, lines: [{ description: 'Logo refresh', qty: 1, price: 600, vat: 21 }] },
+    { d: 83, to: { name: 'Marta Pardo', nif: '00000000T', email: 'marta@pardo.example' }, lines: [{ description: 'Logo refresh', qty: 1, price: 600, vat: 21 }], duplicate: true },
     { d: daysBetween(start, today) - 3, to: { name: 'Acme Studio SL', nif: 'B12345674', email: 'billing@acme.example' }, lines: [{ description: 'Consulting hours', qty: 4, price: 60, vat: 21 }] },
   ];
   const records = [];
