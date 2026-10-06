@@ -11,6 +11,10 @@ const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
 export const fmtDate = (iso) => (ISO_DAY.test(String(iso || '')) ? new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }).format(new Date(`${iso}T12:00:00`)) : '');
 export const isoToday = () => new Date().toLocaleDateString('sv-SE');
 
+// CSV: every cell is quoted, and a cell that starts like a formula gets a quote in front, so a spreadsheet never runs it.
+export const csvPlain = (v) => { const s = String(v ?? ''); return /^[=+\-@]/.test(s) ? `'${s}` : s; };
+export const csvCell = (v) => `"${csvPlain(v).replace(/"/g, '""')}"`;
+
 // Minimal, safe formatting for agent replies: escape first, then only add <b> and bullet glyphs.
 export const md = (s) => esc(s).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/^\s*[*-]\s+/gm, '• ').replace(/(^|\s)\*([^*\n]+)\*(?=\s|$|[.,;:])/g, '$1$2');
 

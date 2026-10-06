@@ -17,6 +17,8 @@ import { startTour, tourSeen } from './js/tour.js';
 import { BADGE, OPEN, statusWord } from './js/status.js';
 import { CHIPS, chipCounts, createLedgerGrid, ledgerRows, registerCsv } from './js/grid.js';
 import { loadVendor } from './js/vendor.js';
+import { MAX_WIDGETS, cleanSpec, defaultBoard, specKey, widgetCsv, widgetData } from './js/widgets.js';
+import { boardCardHtml, createChartHub, insightCardHtml, readTokens } from './js/insights.js';
 
 const $ = (s) => document.querySelector(s);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -31,13 +33,18 @@ const EXAMPLES = [
   'Factura a Lumen Foods SL por 2 diseños de etiqueta a 250 € más IVA',
   'Hotel Mirador paid by bank transfer',
   'Who owes me money?',
+  'Revenue by client this quarter',
 ];
+
+const newId = () => `w${crypto.getRandomValues(new Uint32Array(1))[0].toString(36)}`;
+const withId = (spec) => ({ id: newId(), ...spec });
 
 const fresh = () => ({
   company: { name: 'Estudio Norte SL', nif: 'B76543214', series: `CU${crypto.getRandomValues(new Uint32Array(1))[0].toString(36).slice(0, 4).toUpperCase()}` },
   records: [],
   chat: [],
   activity: [],
+  widgets: [],
 });
 let tampered = null;
 let vatQ = null;
@@ -56,6 +63,10 @@ let state = (() => { try { return JSON.parse(localStorage.getItem(KEY)); } catch
 const firstVisit = !state;
 state = state || fresh();
 state.activity = Array.isArray(state.activity) ? state.activity : [];
+// The Insights board: up to six pinned widget specs. A ledger saved before the board existed gets the default board.
+state.widgets = Array.isArray(state.widgets)
+  ? state.widgets.filter((w) => w && typeof w.id === 'string').slice(0, MAX_WIDGETS).map((w) => ({ id: w.id, ...cleanSpec(w) }))
+  : state.records.length ? defaultBoard().map(withId) : [];
 state.chat = (state.chat || []).filter((m) => m.text !== 'Thinking…');
 for (const m of state.chat) { delete m.running; for (const a of m.actions || []) delete a.busy; }
 // Append-only activity log: who did what, shown in the Activity panel and exportable as JSON.
@@ -110,6 +121,7 @@ function actionTrace(a) {
     const lines = inv.lines.map((l) => `${l.qty} × ${l.description} at €${l.price} + ${l.vat}% VAT`).join('; ');
     return `[Proposed invoice to ${inv.recipient.name}${inv.recipient.nif ? ` (${inv.recipient.nif})` : ''}${inv.recipient.email ? ` <${inv.recipient.email}>` : ''}: ${lines}, due in ${inv.dueDays} days${done}]`;
   }
+  if (a.type === 'propose_widget') return `[Proposed an insight: ${a.args?.type} of ${a.args?.metric} by ${a.args?.groupBy}${done}]`;
   return `[Proposed ${a.type.replace('propose_', '').replace('show_', 'show ')}${a.args?.number ? ` for ${a.args.number}` : ''}${done}]`;
 }
 const chatHistory = () => state.chat.slice(0, -2).slice(-8)
@@ -252,6 +264,7 @@ function describe(a) {
   if (a.type === 'propose_mark_paid') return `Record the payment of ${n}`;
   if (a.type === 'propose_cancel') return `Cancel ${n}`;
   if (a.type === 'show_vat_return') return 'Modelo 303 draft';
+  if (a.type === 'propose_widget') return `Insight: ${cleanSpec(a.args).title}`;
   return String(a.type);
 }
 
@@ -262,20 +275,21 @@ async function perform(a, act) {
   if (act === 'discard') r = { ok: true, text: 'Dismissed.', skipped: true };
   else if (act === 'issue' || act === 'issue-send') r = await issue(normalize(a.args), act === 'issue-send');
   else if (act === 'open-vat') r = { ok: true, text: 'Opened the VAT draft.' };
+  else if (act === 'pin') r = pinWidget(a.args);
   else if (!rec) r = { ok: false, text: 'Invoice not found.' };
   else if (act === 'remind') r = await remind(rec);
   else if (act === 'collect') r = await sendWithPaypal(rec);
   else if (act === 'mark-paid') r = await markPaid(rec, METHOD[a.args?.method] ? a.args.method : 'BANK_TRANSFER');
   else if (act === 'cancel') r = await annul(rec, String(a.args?.reason || '').slice(0, 200));
   else return;
-  Object.assign(a, { done: r.text, ok: r.ok, ...(r.skipped ? { skipped: true } : {}), ...(r.number ? { number: r.number } : {}) });
+  Object.assign(a, { done: r.text, ok: r.ok, ...(r.skipped ? { skipped: true } : {}), ...(r.number ? { number: r.number } : {}), ...(r.pinned ? { pinned: true } : {}) });
 }
 
 async function run(mi, ai, act) {
   const a = state.chat[mi]?.actions?.[ai];
   if (!a || a.done || a.busy) return;
   a.busy = true;
-  log('you', act === 'discard' ? 'dismissed' : 'approved', a.args?.number, describe(a));
+  if (act !== 'pin') log('you', act === 'discard' ? 'dismissed' : 'approved', a.args?.number, describe(a));
   renderChat();
   try {
     await perform(a, act);
@@ -325,7 +339,7 @@ function vatTable(v, compact = false) {
 
 // A step the ledger no longer allows (invoice gone, already settled...): there is nothing left to approve.
 function isDeadEnd(a) {
-  if (a.type === 'propose_invoice' || a.type === 'show_vat_return') return false;
+  if (a.type === 'propose_invoice' || a.type === 'show_vat_return' || a.type === 'propose_widget') return false;
   const rec = findInvoice(state.records, a.args?.number);
   if (!rec) return true;
   const st = status(rec);
@@ -344,6 +358,13 @@ function actionCard(a, mi, ai, inPlan = false) {
   if (a.type === 'show_vat_return') {
     const q = /^\d{4}-Q[1-4]$/.test(a.args?.quarter || '') ? a.args.quarter : returnQuarter(today());
     return `<div class="${card()}"><div class="flex items-center gap-2"><div class="text-xs text-soft">Modelo 303 draft · ${esc(q)}</div><button class="btn-ghost ml-auto !min-h-8" data-act="open-vat" data-id="${id}" data-q="${esc(q)}">Open</button></div><div class="mt-1">${vatTable(vatReturn(state.records, q), true)}</div>${done}</div>`;
+  }
+  if (a.type === 'propose_widget') {
+    // The figures come from widgetData() on the ledger as it is now; the model only chose what to show.
+    const data = widgetData(state.records, a.args, today());
+    chartJobs.set(`chat:${id}`, data);
+    const boardFull = !a.done && state.widgets.length >= MAX_WIDGETS && !state.widgets.some((w) => specKey(w) === specKey(data.spec));
+    return insightCardHtml(data, { id, busy: a.busy, pinned: Boolean(a.pinned), boardFull, done: a.done, ok: a.ok, skipped: a.skipped, tokens: tk(), fmt: eur });
   }
   if (a.type !== 'propose_invoice') {
     const rec = findInvoice(state.records, a.args?.number);
@@ -416,6 +437,7 @@ let chatCount = -1;
 let chatFocus = null; // index of a fresh answer to bring to the top of the chat, so its proposal is read from the start
 function renderChat() {
   const el = $('#chat');
+  for (const key of [...chartJobs.keys()]) if (key.startsWith('chat:')) chartJobs.delete(key);
   const keep = el.scrollTop;
   const wasAtEnd = el.scrollHeight - el.scrollTop - el.clientHeight < 90;
   el.innerHTML = state.chat.length
@@ -434,6 +456,7 @@ function renderChat() {
   if (fresh) top = el.scrollTop + fresh.getBoundingClientRect().top - el.getBoundingClientRect().top - 6;
   chatFocus = null;
   el.scrollTo({ top, behavior: 'instant' });
+  mountCharts('chat:', el);
 }
 
 function renderKpis() {
@@ -625,11 +648,113 @@ function renderPlan() {
   });
 }
 
+// ---------- Insights: the board between the KPIs and the ledger, and the charts of the Insight cards ----------
+
+const chartJobs = new Map(); // chart key -> widgetData, filled while the HTML is built and read when the charts are mounted
+let hub = null;
+let chartsRetry = null;
+let tokens = null;
+const tk = () => (tokens ||= readTokens());
+const idle = (fn) => ('requestIdleCallback' in window ? requestIdleCallback(fn, { timeout: 1500 }) : setTimeout(fn, 50));
+
+// AG Charts loads after the first render. Until it is there (or if it never arrives) every card keeps a table of the same figures.
+async function chartHub() {
+  if (hub) return hub;
+  const ag = window.agCharts || await new Promise((done) => idle(() => loadVendor('charts', { timeout: 3000 }).then(done)));
+  if (!ag) {
+    // A file that arrives late is picked up once, five seconds from now.
+    chartsRetry ||= setTimeout(() => { chartsRetry = null; if (window.agCharts) { boardSig = ''; renderBoard(); renderChat(); } }, 5000);
+    return null;
+  }
+  try { hub = createChartHub(ag, { tokens: tk(), fmt: eur }); } catch { hub = null; }
+  return hub;
+}
+
+async function mountCharts(prefix, root) {
+  const slots = () => root.querySelectorAll(`[data-chart^="${prefix}"]`);
+  if (!slots().length) { hub?.prune(prefix, new Set()); return; }
+  const h = await chartHub();
+  if (!h) return;
+  const keep = new Set();
+  slots().forEach((slot) => {
+    const data = chartJobs.get(slot.dataset.chart);
+    if (!data) return;
+    keep.add(slot.dataset.chart);
+    h.mount(slot, slot.dataset.chart, data);
+  });
+  h.prune(prefix, keep);
+}
+
+let boardSig = '';
+let newWidgetId = '';
+const emptyBoard = () => `<div class="board-empty"><p>No insights pinned yet. Ask a question about your numbers and pin the answer here.</p><div class="board-empty-actions"><button type="button" class="btn-ghost" data-ask="6">${esc(EXAMPLES[6])}</button><button type="button" class="btn-ghost" data-ask="7">${esc(EXAMPLES[7])}</button></div></div>`;
+
+function renderBoard() {
+  const widgets = state.widgets;
+  $('#board').hidden = !state.records.length && !widgets.length;
+  $('#boardCount').textContent = widgets.length ? `${widgets.length} of ${MAX_WIDGETS}` : '';
+  const collapsed = Boolean(state.boardCollapsed);
+  $('#boardBody').hidden = collapsed;
+  const toggle = $('#boardToggle');
+  toggle.textContent = collapsed ? 'Show' : 'Hide';
+  toggle.setAttribute('aria-expanded', String(!collapsed));
+  if (collapsed) return;
+  const cards = widgets.map((w) => ({ w, data: widgetData(state.records, w, today()) }));
+  // The cards are drawn again only when a widget or one of its figures changed, so a chart is not rebuilt on every render.
+  const sig = JSON.stringify(cards.map(({ w, data }) => [w.id, data.type, data.rows, data.n, data.text]));
+  if (sig === boardSig) return;
+  boardSig = sig;
+  for (const key of [...chartJobs.keys()]) if (key.startsWith('board:')) chartJobs.delete(key);
+  cards.forEach(({ w, data }) => chartJobs.set(`board:${w.id}`, data));
+  $('#boardGrid').innerHTML = cards.length ? cards.map(({ w, data }) => boardCardHtml(w, data, { isNew: w.id === newWidgetId, tokens: tk(), fmt: eur })).join('') : emptyBoard();
+  const fresh = newWidgetId ? $(`#boardGrid [data-w="${CSS.escape(newWidgetId)}"]`) : null;
+  newWidgetId = '';
+  mountCharts('board:', $('#boardGrid'));
+  fresh?.scrollIntoView({ behavior: reducedMotion() ? 'auto' : 'smooth', block: 'nearest', inline: 'nearest' }); // the card that was just pinned
+}
+
+function pinWidget(args) {
+  const spec = cleanSpec(args);
+  if (state.widgets.some((w) => specKey(w) === specKey(spec))) return { ok: true, text: 'Already on the board.', pinned: true };
+  if (state.widgets.length >= MAX_WIDGETS) return { ok: false, text: `The board holds ${MAX_WIDGETS} insights. Remove one first.` };
+  const w = withId(spec);
+  state.widgets.push(w);
+  state.boardCollapsed = false;
+  newWidgetId = w.id;
+  log('you', 'widget_pinned', '', spec.title);
+  closeSheet(); // on a phone the sheet gets out of the way, so the new card is seen (renderBoard scrolls to it)
+  return { ok: true, text: 'Pinned to the board.', pinned: true };
+}
+
+function removeWidget(id) {
+  const w = state.widgets.find((x) => x.id === id);
+  if (!w) return;
+  state.widgets = state.widgets.filter((x) => x.id !== id);
+  log('you', 'widget_removed', '', w.title);
+  save();
+  renderAll();
+}
+
+const slug = (text) => String(text).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'insight';
+function exportWidget(id) {
+  const w = state.widgets.find((x) => x.id === id);
+  if (w) download(`cuadra-insight-${slug(w.title)}.csv`, widgetCsv(widgetData(state.records, w, today())), 'text/csv');
+}
+
+function showBoard() {
+  state.boardCollapsed = false;
+  save();
+  renderBoard();
+  closeSheet();
+  $('#board').scrollIntoView({ behavior: reducedMotion() ? 'auto' : 'smooth', block: 'nearest' });
+}
+
 async function renderAll() {
   const company = `${state.company.name} · NIF ${state.company.nif} · series ${state.company.series}`;
   $('#company').textContent = company;
   $('#menuCompany').textContent = company;
   renderKpis();
+  renderBoard();
   renderChat();
   renderInvoices();
   renderVat();
@@ -768,6 +893,7 @@ $('#ask').addEventListener('submit', (ev) => {
 $('#chat').addEventListener('click', async (ev) => {
   const all = ev.target.closest('button[data-plan-all]');
   if (all) return approveAll(Number(all.dataset.planAll));
+  if (ev.target.closest('button[data-board="show"]')) return showBoard();
   const view = ev.target.closest('button[data-view]');
   if (view) {
     const rec = findInvoice(state.records, view.dataset.view);
@@ -846,6 +972,19 @@ const exportLedgerCsv = () => {
 };
 $('#ledgerCsv').onclick = exportLedgerCsv;
 
+$('#boardToggle').onclick = () => { state.boardCollapsed = !state.boardCollapsed; save(); renderBoard(); };
+$('#boardGrid').addEventListener('click', (ev) => {
+  const remove = ev.target.closest('[data-w-remove]');
+  if (remove) return removeWidget(remove.dataset.wRemove);
+  const csv = ev.target.closest('[data-w-csv]');
+  if (csv) return exportWidget(csv.dataset.wCsv);
+  const example = ev.target.closest('[data-ask]');
+  if (example) {
+    if (!wide.matches) openSheet();
+    ask(EXAMPLES[Number(example.dataset.ask)]);
+  }
+});
+
 $('#chainTrack').addEventListener('click', (ev) => {
   const b = ev.target.closest('button[data-i]');
   const rec = b && state.records[Number(b.dataset.i)];
@@ -904,6 +1043,7 @@ function startOver() {
 async function loadSample(actor = 'you') {
   startOver();
   state.records = await buildSample({ issuer: state.company, today: today() });
+  state.widgets = defaultBoard().map(withId);
   vatQ = null;
   log(actor, 'sample', '', `${state.records.length} records: paid, overdue, open and one cancelled`);
   save();
@@ -989,7 +1129,7 @@ document.querySelector('a[href="#msg"]').addEventListener('click', (ev) => {
 });
 // The button tells how many proposals are still waiting for a decision.
 function updateFab() {
-  const open = state.chat.flatMap((m) => m.actions || []).filter((a) => !a.done && a.type !== 'show_vat_return' && !isDeadEnd(a)).length;
+  const open = state.chat.flatMap((m) => m.actions || []).filter((a) => !a.done && a.type !== 'show_vat_return' && a.type !== 'propose_widget' && !isDeadEnd(a)).length;
   const fab = $('#openAgent');
   fab.dataset.pending = String(open);
   fab.setAttribute('aria-label', open ? `Ask Cuadra, ${open} proposal${open === 1 ? '' : 's'} waiting for you` : 'Ask Cuadra');
@@ -1101,7 +1241,7 @@ if (wantsTour) runTour(query.get('tour') === '1');
 
 // Local visual self-test (localhost only): plays the demo flow so a headless browser can screenshot it.
 //   #selftest          sample quarter, invoice approved with PayPal, chase plan (first step), VAT draft,
-//                      "Close my quarter" plan approved in one go, tamper test on and off
+//                      "Close my quarter" plan approved in one go, an insight pinned to the board, tamper test on and off
 //   #selftest-tamper   the same, but it stops with the tamper test on (broken chain)
 //   #selftest-detail   the same, then opens the detail of the last invoice
 // body[data-selftest] becomes "done" when the flow has finished.
@@ -1121,6 +1261,7 @@ if (location.hostname === 'localhost' && location.hash.startsWith('#selftest')) 
   await say(EXAMPLES[2], () => document.querySelector('#chat button[data-act="collect"]')?.click());
   await say(EXAMPLES[3], () => click('#chat button[data-act="open-vat"]'));
   await say(EXAMPLES[1], () => click('#chat [data-plan-all]'));
+  await say(EXAMPLES[7], () => click('#chat button[data-act="pin"]'));
   await sleep(1800);
   window.scrollTo(0, 0);
   await setTamper(true);

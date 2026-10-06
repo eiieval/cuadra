@@ -90,6 +90,17 @@
     <div id="rightCol" class="min-w-0 space-y-4">
       <div id="kpis" class="grid grid-cols-2 gap-3 xl:grid-cols-4"></div>
 
+      <!-- Insights: answers to "ask the ledger", pinned. AG Charts loads after the first render; without it each card is a table. -->
+      <section id="board" class="panel p-4" aria-labelledby="board-title" hidden>
+        <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <h2 id="board-title" class="font-semibold">Insights</h2>
+          <span class="text-xs text-soft">pinned answers · every figure is computed from your ledger, not by the AI</span>
+          <span id="boardCount" class="ml-auto text-xs text-soft"></span>
+          <button id="boardToggle" type="button" class="btn-ghost !min-h-8" aria-expanded="true" aria-controls="boardBody">Hide</button>
+        </div>
+        <div id="boardBody"><div id="boardGrid" class="board-grid"></div></div>
+      </section>
+
       <section id="ledger" class="panel p-4" aria-labelledby="ledger-title">
         <div class="flex flex-wrap items-center gap-3">
           <h2 id="ledger-title" class="font-semibold">Ledger</h2>

@@ -5,7 +5,7 @@
 // Every number the grid shows comes from the ledger records and the engine; the grid only sorts, filters and draws.
 import { isAnulacion, money } from './verifactu.js';
 import { cancelledNumbers, stateOf } from './ledger.js';
-import { esc, eur, fmtDate } from './fmt.js';
+import { csvCell, csvPlain, esc, eur, fmtDate } from './fmt.js';
 import { BADGE, OPEN, statusWord } from './status.js';
 
 // ---------- rows ----------
@@ -77,8 +77,7 @@ export function gridTotals(rows) {
 // ---------- register CSV (what "Export CSV" writes) ----------
 
 // A cell that starts like a formula would be run by a spreadsheet: neutralise it. Every cell is quoted.
-export const csvPlain = (v) => { const s = String(v ?? ''); return /^[=+\-@]/.test(s) ? `'${s}` : s; };
-export const csvCell = (v) => `"${csvPlain(v).replace(/"/g, '""')}"`;
+export { csvCell, csvPlain };
 
 export const REGISTER_COLUMNS = ['kind', 'number', 'date', 'client', 'nif', 'base', 'vat', 'total', 'status', 'due', 'hash'];
 export const REGISTER_HEADER = 'record,number,date,client,client_nif,base,vat,total,status,due,hash';

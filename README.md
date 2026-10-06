@@ -17,6 +17,7 @@ Cuadra turns a sentence into a compliant invoice, collects it with PayPal, chase
 | **Reconcile** | "Hotel Mirador paid by bank transfer" | Finds the invoice and records the payment, in PayPal too. |
 | **Correct** | "Annul the duplicate invoice" | Cancels it in PayPal and appends a VeriFactu cancellation record (RegistroAnulacion). Nothing is ever edited or deleted. Paid invoices are refused: they need a corrective invoice. |
 | **Declare** | "Prepare my VAT return" | Modelo 303 draft for the quarter that is due (boxes 01–09 and 27) with the days left to file, computed from the ledger, never by the model. |
+| **Ask the ledger** | "Who owes me money?", "Revenue by client this quarter" | Proposes a chart, a table or a single figure (an **Insight**) that you can pin to the Insights board. The agent only picks what to show; the browser computes every number from the ledger. |
 | **Delegate** | Any MCP client | Claude, ChatGPT, Cursor or your own agent can do all of the above through the Cuadra MCP server. |
 
 The app opens on a sample quarter (paid, overdue and open invoices plus one cancelled duplicate), so every feature can be tried in the first minute, and a four-step tour (the **?** button, or `?tour=1`) walks through it.
@@ -27,6 +28,7 @@ The signature of the product is **the living chain**: the book that proves itsel
 
 - **The chain.** A strip of linked blocks, one per record (invoice or cancellation) with its number, amount and the first six hex of its hash. It is re-verified, with a short sweep from left to right, every time the ledger changes. **Tamper test** alters one issued amount in memory: that block turns red with a broken link ("stored hash ≠ recomputed hash"), every block after it turns grey ("not verifiable"), the ledger marks the record as altered, and undoing it heals the chain. A new invoice drops into the chain when you approve it, its ledger row lights up, and a toast gives the hash.
 - **Proposals as paper.** The agent answers with a small invoice document (issuer, client, lines, base, VAT, total, due date) and the buttons to issue it. Under it, **Engine checks**: client matched from the ledger or new, NIF checksum, VAT rate, totals, due date. They are computed in the browser from the proposal, never by the model.
+- **Insights board.** Between the KPIs and the ledger: up to six pinned widgets, three by default (invoiced vs collected by month, who still owes what, receivables aging), each an [AG Charts Community](https://charts.ag-grid.com/) chart (MIT, self-hosted) with its figures, **Export CSV** and a remove button; the board collapses and is saved with the ledger. Ask "Who owes me money?" or "Revenue by client this quarter" and the agent answers with an **Insight card** in the chat: a preview of the chart, the engine's figure and **Pin to board**. `public/js/widgets.js` (`widgetData`) computes the dataset from the ledger and its statuses, so the model never writes an amount; the figures agree with the KPIs and the Modelo 303 draft (tests compare them box by box). Without the charts file (blocked, slow, tampered, or throwing) every card shows a table with the same figures. On a phone the board is a row of cards you swipe through.
 - **Plans.** A reply with two or more actions becomes a checklist ("Plan · 4 steps", "2 of 3 done"). Each step is approved on its own; only reminders and collections can be approved together, never invoices, payments or cancellations. **"Close my quarter"** (or "Cierra el trimestre") builds one: reminders for overdue invoices that are on PayPal, collections for the rest, and the VAT draft.
 - **Activity.** An append-only log of who did what (agent proposed, you approved, the engine issued, PayPal sent, you tampered), last 500 entries, exportable as JSON from the ⋯ menu.
 - **A document you can send.** The invoice document is bilingual ("Factura / Invoice") with two QR codes: Verify at AEAT and, when the invoice is on PayPal, Pay with PayPal. **Copy verification link** and **Open printable** open `verify.html`: the record travels in the URL fragment (never sent to a server), is re-hashed in the client's browser and shown as "✓ This document matches its hash" or "✗ Altered", ready to print or save as PDF.
@@ -46,6 +48,7 @@ The signature of the product is **the living chain**: the book that proves itsel
             proposals only:              Invoicing v2: create · send · status · remind · cancel · payments
             invoice · reminder · collect Subscriptions v1: Cuadra's own plans
             mark paid · cancel · VAT     OAuth 2.0 client credentials (server-side only)
+            insight (chart specification only: the browser draws it and computes the figures)
 
  MCP client (Claude, ChatGPT…) ──stdio──► mcp/server.js ──► same engine + PayPal client ──► ~/.cuadra/ledger.json
 ```
@@ -139,7 +142,7 @@ The server tells the client to draft before issuing and never to compute VAT fig
 - PayPal and Gemini credentials live only in server environment variables.
 - Every PayPal invoice and subscription is bound to the browser session that created it with an HMAC token: nobody can read, chase, cancel or mark paid another session's invoices.
 - Server-side validation of every invoice: Spanish VAT rates only, valid NIF/CIF/NIE, bounded quantities and prices, totals recomputed.
-- Strict Content-Security-Policy, no third-party scripts: Tailwind is compiled; the QR library and AG Grid Community are vendored from the npm registry (`public/vendor/<lib>/VERSION.md` records version, license and SHA-256), `npm test` recomputes their hashes, and the page inserts them with a Subresource Integrity attribute, so a modified file is refused and the fallback takes over.
+- Strict Content-Security-Policy, no third-party scripts: Tailwind is compiled; the QR library, AG Grid Community and AG Charts Community are vendored from the npm registry (`public/vendor/<lib>/VERSION.md` records version, license and SHA-256), `npm test` recomputes their hashes, and the page inserts them with a Subresource Integrity attribute, so a modified file is refused and the fallback takes over.
 - Same-origin checks, JSON-only endpoints, per-IP rate limits, bounded request bodies, generic user-facing errors and redacted server logs.
 - Model output is escaped before rendering; ledger data and chat history are passed to the model as data, never as instructions.
 - CSV exports are protected against formula injection.
@@ -167,9 +170,9 @@ No dependencies to install: Node 20 or later is enough.
 ```
 api/        agent.js · paypal.js · health.js       serverless functions
 lib/        agent, LLM client, PayPal client, validation, request guard
-public/     index.html · verify.html · app.js · verify.js · vendor/ (QR, AG Grid, each with VERSION.md)
+public/     index.html · verify.html · app.js · verify.js · vendor/ (QR, AG Grid, AG Charts, each with VERSION.md)
   js/       verifactu.js · ledger.js (engine) · chain.js · checks.js · plan.js · proposal.js · document.js · share.js
-            activity.js · tour.js · fmt.js · qr.js · status.js · grid.js (ledger grid) · vendor.js (lazy loader + SRI)
+            activity.js · tour.js · fmt.js · qr.js · status.js · grid.js (ledger grid) · widgets.js + insights.js (Ask the ledger) · vendor.js (lazy loader + SRI)
 styles/     input.css (design tokens and components) → public/styles.css via Tailwind
 docs/       og.html (source of public/og.png)
 mcp/        server.js                                MCP server (stdio)
@@ -178,7 +181,7 @@ scripts/    test.js · ui-test.js · mcp-test.js · shots.js · social-card.js �
 
 ## Status
 
-Demo on PayPal Sandbox and the AEAT test verification service. Not a certified invoicing system: a production deployment adds the electronic signature, submission to the AEAT and server-side storage. Vendored libraries: qrcode-generator 1.4.4 and AG Grid Community 36.2.0, both MIT.
+Demo on PayPal Sandbox and the AEAT test verification service. Not a certified invoicing system: a production deployment adds the electronic signature, submission to the AEAT and server-side storage. Vendored libraries: qrcode-generator 1.4.4, AG Grid Community 36.2.0 and AG Charts Community 14.2.0, all MIT.
 
 ## License
 

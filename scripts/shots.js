@@ -144,6 +144,26 @@ try {
       await settle(page, 300);
     }
 
+    // 1c. The Insights board: three cards between the KPIs and the ledger, each with an AG Charts chart.
+    await page.waitForSelector('#boardGrid canvas', { timeout: 15000 });
+    await settle(page, 600);
+    const cards = await page.locator('#boardGrid .board-card').evaluateAll((els) => els.map((c) => ({ title: c.querySelector('.board-title').textContent.trim(), canvases: c.querySelectorAll('canvas').length, text: c.innerText.replace(/\s+/g, ' ') })));
+    const boardText = cards.map((c) => c.text).join(' | ');
+    check(`[${view.name}] insights: the board opens with three cards, a chart in each (invoiced vs collected by month, who still owes what, receivables aging)`, cards.map((c) => c.title).join(' | ') === 'Invoiced vs collected by month | Who still owes what | Receivables aging' && cards.every((c) => c.canvases === 1) && (await page.locator('#board').getAttribute('hidden')) === null);
+    check(`[${view.name}] insights: every figure on the board is the engine's (4437,80 € invoiced, 2431,40 € collected, 2006,40 € outstanding over 3 open invoices, the donut legend adds up per client)`, /Invoiced 4437,80 € Collected 2431,40 €/.test(boardText) && /3 open invoices/.test(boardText) && /Hotel Mirador SL 990,00 € 49%/.test(boardText) && /Marta Pardo 726,00 € 36%/.test(boardText) && /Acme Studio SL 290,40 € 14%/.test(boardText) && (await page.locator('#boardGrid .board-card').nth(2).innerText()).includes('2006,40'));
+    check(`[${view.name}] insights: the board sits between the KPIs and the ledger${view.mobile ? ' and is a row of cards you swipe through' : ''}`, await page.evaluate(() => { const y = (s) => document.querySelector(s).getBoundingClientRect().top; return y('#kpis') < y('#board') && y('#board') < y('#ledger'); }) && (!view.mobile || (await page.evaluate(() => { const g = document.querySelector('#boardGrid'); return g.scrollWidth > g.clientWidth; }))) && (await overflow(page)) <= 0);
+    await page.evaluate(() => document.querySelector('#board').scrollIntoView({ block: 'start' }));
+    await settle(page, 500);
+    if (view.mobile) {
+      await page.evaluate(() => { document.querySelector('#openAgent').style.visibility = 'hidden'; });
+      await page.locator('#board').screenshot({ path: `${OUT}/10-insights-board-390.png` });
+      await page.evaluate(() => { document.querySelector('#openAgent').style.visibility = ''; });
+    } else {
+      await shot('10-insights-board');
+    }
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await settle(page, 300);
+
     // 2. Invoice proposal as a paper document, with the engine checks under it.
     await openAgent();
     await say(page, 'Invoice Acme Studio SL (B12345674) for 3 hours of consulting at €60');
@@ -262,8 +282,9 @@ try {
     await settle(page, 1800);
     await gridReady(page);
     check('#selftest: it runs with the grid active (9 rows: the sample, the invoice it issued) and no row is left marked as altered', (await page.locator('#ledger').getAttribute('data-view')) === 'grid' && (await page.locator(ROWS(VIEWS[0])).count()) === 9 && (await page.locator('#ledgerGrid .row-bad').count()) === 0);
+    check('#selftest: the Insights board shows its three default cards and the one the flow pinned (4 of 6), each with a chart', (await page.locator('#boardGrid .board-card').count()) === 4 && (await page.locator('#boardGrid canvas').count()) === 4 && /4 of 6/.test(await page.locator('#boardCount').innerText()));
     const events = await page.evaluate(() => [...new Set(JSON.parse(localStorage.getItem('cuadra-demo-v1')).activity.map((e) => e.event))]);
-    const wanted = ['sample', 'proposal', 'approved', 'issued', 'sent', 'reminder', 'tamper_on', 'tamper_off'];
+    const wanted = ['sample', 'proposal', 'approved', 'issued', 'sent', 'reminder', 'widget_pinned', 'tamper_on', 'tamper_off'];
     check(`#selftest: the Activity log has every step of the flow (${wanted.join(', ')})`, wanted.every((e) => events.includes(e)));
     check('#selftest: the Activity panel lists them and the chain ends verified', (await page.locator('#activityList .activity-row').count()) >= 8 && /Chain verified/.test(await page.locator('#chainStatus').innerText()));
     await page.screenshot({ path: `${OUT}/07-selftest-1280.png` });
@@ -433,6 +454,135 @@ try {
       await page.locator('#rows .row', { hasText: 'Hotel Mirador' }).locator('[data-do="collect"]').click();
       await settle(page, 700);
       check(`grid fallback, ${label}: the table still works (Collect puts the invoice on PayPal) and the CSV export falls back to the register writer`, (await page.locator('#rows .row', { hasText: 'Hotel Mirador' }).locator('[data-do="remind"]').count()) === 1 && await (async () => { await page.click('#menuBtn'); const [d] = await Promise.all([page.waitForEvent('download'), page.click('#csv')]); const text = readFileSync(await d.path(), 'utf8'); return d.suggestedFilename() === 'cuadra-libro-registro.csv' && text.startsWith('﻿"record","number"') && text.trim().split(/\r?\n/).length === 9; })());
+      await ctx.close();
+    }
+  }
+
+  // 11. Ask the ledger: an Insight proposal in the chat, pinning it, the six-widget limit, removing, CSV, collapsing,
+  //     and the board surviving a reload.
+  for (const view of VIEWS) {
+    const ctx = await newContext({ ...view.opts, acceptDownloads: true });
+    await ctx.addInitScript(() => localStorage.setItem('cuadra-tour-v1', '1'));
+    const page = await ctx.newPage();
+    watch(page, `${view.name} insights`);
+    const openAgent = async () => { if (view.mobile && !(await page.evaluate(() => document.body.classList.contains('sheet-open')))) { await page.click('#openAgent'); await settle(page, 450); } };
+    const closeAgent = async () => { if (view.mobile && (await page.evaluate(() => document.body.classList.contains('sheet-open')))) { await page.click('#sheetClose'); await settle(page, 350); } };
+    const ask = async (text) => { await openAgent(); await say(page, text); await page.waitForSelector('#chat .insight', { timeout: 10000 }); await settle(page, 500); };
+    const now = new Date();
+    const thisQuarter = `${now.getFullYear()}-Q${Math.ceil((now.getMonth() + 1) / 3)}`;
+    const cardsOnBoard = () => page.locator('#boardGrid .board-card');
+    const titles = () => cardsOnBoard().evaluateAll((els) => els.map((c) => c.querySelector('.board-title').textContent.trim()));
+    const lastInsight = () => page.locator('#chat .insight').last();
+    const boardState = () => page.evaluate(() => JSON.parse(localStorage.getItem('cuadra-demo-v1')).widgets.map((w) => w.title));
+    await page.goto(`${BASE}/`, { waitUntil: 'networkidle' });
+    await page.waitForSelector('#boardGrid canvas', { timeout: 15000 });
+    await settle(page, 600);
+
+    // An Insight proposal: the agent only chose the specification, the card is drawn from the ledger.
+    await ask('Who owes me money?');
+    const insight = lastInsight();
+    const legendText = (await insight.locator('.insight-legend').innerText()).replace(/\s+/g, ' ');
+    check(`[${view.name}] Insight proposal: a card with the title, the engine's figure, a donut chart, the legend with amounts, the honest note and Pin / Dismiss`, (await insight.locator('.insight-title').innerText()) === 'Who still owes what' && /2006,40/.test(await insight.innerText()) && (await insight.locator('canvas').count()) === 1 && /Hotel Mirador SL 990,00 € 49%/.test(legendText) && /not by the AI/.test(await insight.innerText()) && (await insight.locator('[data-act="pin"]').innerText()) === 'Pin to board' && (await insight.locator('[data-act="discard"]').isVisible()));
+    check(`[${view.name}] Insight proposal: it is not counted as a decision waiting for you (the Ask Cuadra badge stays at 0) and the chat shows it without a plan card`, (await page.locator('#openAgent').getAttribute('data-pending')) === '0' && (await page.locator('#chat .plan').count()) === 0);
+    // The card from its first line (the question and the answer above it scroll out of the way).
+    const cardToTop = () => page.evaluate(() => { const c = document.querySelector('#chat'); const k = [...c.querySelectorAll('.insight')].at(-1); c.scrollTop += k.getBoundingClientRect().top - c.getBoundingClientRect().top - 6; });
+    await cardToTop();
+    await settle(page, 400);
+    await page.screenshot({ path: `${OUT}/11-insight-proposal-${view.name}.png` });
+    if (!view.mobile) {
+      // The same card on a taller window, where the question, the answer and the whole card are in view.
+      await page.setViewportSize({ width: 1280, height: 1000 });
+      await settle(page, 500);
+      await page.evaluate(() => { const c = document.querySelector('#chat'); c.scrollTop = 0; });
+      await page.evaluate(() => { const c = document.querySelector('#chat'); const q = [...c.querySelectorAll('.bubble-user')].at(-1); c.scrollTop += q.getBoundingClientRect().top - c.getBoundingClientRect().top - 6; });
+      await settle(page, 300);
+      await page.screenshot({ path: `${OUT}/11c-insight-proposal-full-1280x1000.png` });
+      await page.setViewportSize({ width: 1280, height: 800 });
+      await settle(page, 400);
+    }
+
+    // Pinning something that is already on the board says so; pinning something new adds a card.
+    await insight.locator('[data-act="pin"]').click();
+    await settle(page, 700);
+    check(`[${view.name}] pin: the default board already has it ("Already on the board."), so nothing is added`, /Already on the board/.test(await lastInsight().innerText()) && (await cardsOnBoard().count()) === 3);
+    await ask('Revenue by client this quarter');
+    check(`[${view.name}] Insight proposal: "Revenue by client this quarter" is a bar chart with the one invoice of the quarter (290,40 € to Acme Studio SL)`, (await lastInsight().locator('.insight-title').innerText()) === 'Revenue by client' && /290,40/.test(await lastInsight().innerText()) && (await lastInsight().locator('canvas').count()) === 1 && new RegExp(`1 invoice · ${thisQuarter}`).test(await lastInsight().innerText()));
+    await lastInsight().locator('[data-act="pin"]').click();
+    await settle(page, 900);
+    check(`[${view.name}] pin: "Pin to board" adds a fourth card with its chart, logs "Widget pinned", saves it and shows the board${view.mobile ? ' (the sheet closes)' : ''}`, (await cardsOnBoard().count()) === 4 && (await titles()).at(-1) === 'Revenue by client' && (await cardsOnBoard().last().locator('canvas').count()) === 1 && /Widget pinned/.test(await page.locator('#activityList').innerText()) && (await boardState()).length === 4 && /Pinned to the board/.test(await lastInsight().textContent()) && (!view.mobile || !(await page.evaluate(() => document.body.classList.contains('sheet-open')))));
+    check(`[${view.name}] pin: the board scrolls to the card that was just pinned and the card is in view`, await page.evaluate(() => { const r = document.querySelector('#boardGrid .board-card:last-child').getBoundingClientRect(); return r.top >= 0 && r.top < innerHeight - 60 && r.left >= 0 && r.left < innerWidth - 40; }));
+    await page.screenshot({ path: `${OUT}/11b-board-pinned-${view.name}.png` });
+
+    // Export one card, then fill the board to six: the seventh cannot be pinned until one is removed.
+    const [csv] = await Promise.all([page.waitForEvent('download'), cardsOnBoard().first().locator('[data-w-csv]').click()]);
+    const csvText = readFileSync(await csv.path(), 'utf8');
+    check(`[${view.name}] board: CSV of a card is the dataset it shows (header, one line per month, total), formula-safe, named after the card`, csv.suggestedFilename() === 'cuadra-insight-invoiced-vs-collected-by-month.csv' && /^﻿"Month","Invoiced","Collected"\r\n"\w{3}","2057\.00","2057\.00"\r\n"\w{3}","1364\.40","374\.40"/.test(csvText) && csvText.trimEnd().endsWith('"Total","4437.80","2431.40"'));
+    await ask('VAT by rate last quarter');
+    await lastInsight().locator('[data-act="pin"]').click();
+    await settle(page, 600);
+    await ask('Invoiced by month this year');
+    await lastInsight().locator('[data-act="pin"]').click();
+    await settle(page, 600);
+    await ask('Collected by client this quarter');
+    check(`[${view.name}] board: six cards at most; the seventh Insight cannot be pinned and says why`, (await cardsOnBoard().count()) === 6 && (await lastInsight().locator('[data-act="pin"]').isDisabled()) && /The board holds 6 insights/.test(await lastInsight().innerText()) && /6 of 6/.test(await page.locator('#boardCount').innerText()));
+    await page.evaluate(() => document.querySelector('#board').scrollIntoView({ block: 'start' }));
+    await closeAgent();
+    await settle(page, 500);
+    await page.locator('#boardGrid .board-card').nth(3).locator('[data-w-remove]').click();
+    await settle(page, 700);
+    check(`[${view.name}] board: removing a card ("Revenue by client") leaves five, logs "Widget removed", and the waiting Insight can be pinned again`, (await cardsOnBoard().count()) === 5 && !(await titles()).includes('Revenue by client') && /Widget removed/.test(await page.locator('#activityList').innerText()) && !(await lastInsight().locator('[data-act="pin"]').isDisabled()));
+
+    // Collapse and expand, then reload: the board and its charts come back.
+    await page.click('#boardToggle');
+    await settle(page, 300);
+    const hidden = await page.locator('#boardBody').isHidden();
+    await page.click('#boardToggle');
+    await settle(page, 700);
+    check(`[${view.name}] board: Hide collapses it (aria-expanded false), Show brings the cards and their charts back`, hidden && (await page.locator('#boardToggle').getAttribute('aria-expanded')) === 'true' && (await page.locator('#boardGrid canvas').count()) === 5);
+    await page.reload({ waitUntil: 'networkidle' });
+    await page.waitForSelector('#boardGrid canvas', { timeout: 15000 });
+    await settle(page, 600);
+    check(`[${view.name}] board: a reload restores the five pinned cards with their charts (the board is saved with the ledger)`, (await cardsOnBoard().count()) === 5 && (await page.locator('#boardGrid canvas').count()) === 5 && (await boardState()).length === 5);
+    await page.screenshot({ path: `${OUT}/11d-board-after-reload-${view.name}.png`, fullPage: false });
+
+    // Start empty hides the board's content; the guided empty state offers the two questions.
+    page.on('dialog', (d) => d.accept());
+    await page.click('#menuBtn');
+    await page.click('#reset');
+    await settle(page, 900);
+    check(`[${view.name}] board: after Start empty there is no board to show (no ledger, nothing pinned)`, await page.locator('#board').isHidden());
+    await ctx.close();
+  }
+
+  // 12. The charts are an enhancement too: with the library blocked, tampered or throwing, every card keeps a table of the
+  //     same figures, pinning still works, and nobody sees an error.
+  {
+    const real = readFileSync(here('../public/vendor/ag-charts/ag-charts-community.min.js'));
+    const cases = [
+      ['blocked', async (ctx) => { await ctx.route('**/vendor/ag-charts/**', (r) => r.abort()); }, [/Failed to load resource/, /ag-charts/]],
+      ['tampered (integrity check)', async (ctx) => { await ctx.route('**/vendor/ag-charts/**', (r) => r.fulfill({ status: 200, contentType: 'text/javascript', body: Buffer.concat([real, Buffer.from('\n/* altered */')]) })); }, [/integrity/i, /ag-charts/]],
+      ['throws while drawing', async (ctx) => { await ctx.addInitScript(() => { window.agCharts = { AgCharts: { create() { throw new Error('boom'); } } }; }); }, []],
+    ];
+    for (const [label, setup, expected] of cases) {
+      const ctx = await newContext({ ...VIEWS[0].opts });
+      await ctx.addInitScript(() => localStorage.setItem('cuadra-tour-v1', '1'));
+      await setup(ctx);
+      const page = await ctx.newPage();
+      watch(page, `charts fallback (${label})`, expected);
+      await page.goto(`${BASE}/`, { waitUntil: 'networkidle' });
+      await settle(page, 2500);
+      const tables = await page.locator('#boardGrid .insight-table').count();
+      const flat = (await page.locator('#boardGrid').innerText()).replace(/\s+/g, ' ');
+      check(`charts fallback, ${label}: the three cards show tables with the same figures (no canvas, no error)`, tables === 3 && (await page.locator('#boardGrid canvas').count()) === 0 && /Hotel Mirador SL 990,00 €/.test(flat) && /\w{3} 2057,00 € 2057,00 €/.test(flat) && /0–30 days 1016,40 €/.test(flat));
+      await say(page, 'Who owes me money?');
+      await page.locator('#chat .insight [data-act="pin"]').last().click();
+      await settle(page, 600);
+      check(`charts fallback, ${label}: an Insight proposal is a table too and pinning it still works`, (await page.locator('#chat .insight .insight-table').count()) === 1 && /Already on the board/.test(await page.locator('#chat .insight').last().innerText()));
+      if (label === 'blocked') {
+        await page.evaluate(() => document.querySelector('#board').scrollIntoView({ block: 'start' }));
+        await settle(page, 400);
+        await page.screenshot({ path: `${OUT}/12-insights-fallback-tables-1280.png` });
+      }
       await ctx.close();
     }
   }

@@ -20,6 +20,8 @@ export const EVENTS = {
   tamper_off: 'Tamper test off',
   sample: 'Sample loaded',
   reset: 'Ledger reset',
+  widget_pinned: 'Widget pinned',
+  widget_removed: 'Widget removed',
 };
 
 const text = (v, max) => String(v ?? '').replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max);

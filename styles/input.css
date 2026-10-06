@@ -332,6 +332,61 @@ button.chain-block:hover { transform: translateY(-2px); border-color: rgba(255, 
 .tick-skip { color: var(--soft); }
 .plan-skip .card, .plan-skip .proposal { opacity: .7; }
 
+/* ---------- insights: the board between the KPIs and the ledger, and the Insight card in the agent's chat ---------- */
+.board-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); gap: .75rem; margin-top: .75rem; }
+.board-grid[hidden], #boardBody[hidden], #board[hidden] { display: none; }
+.board-card { display: flex; min-width: 0; flex-direction: column; padding: .8rem .85rem .7rem; border: 1px solid var(--line); border-radius: .85rem; background: var(--surface-2); }
+.board-card.is-new { animation: drop-in .4s var(--ease) both; }
+.board-card-head { display: flex; align-items: flex-start; gap: .4rem; min-height: 2.15rem; }
+.board-title { flex: 1; min-width: 0; font-size: .8125rem; font-weight: 600; line-height: 1.3; }
+.board-tools { display: flex; flex: none; gap: .15rem; margin: -.15rem -.3rem 0 0; }
+.mini-btn { min-width: 1.6rem; height: 1.6rem; padding: 0 .4rem; border: 1px solid transparent; border-radius: .45rem; color: var(--soft); font-size: 11px; font-weight: 600; transition: color .2s var(--ease), border-color .2s var(--ease), background-color .2s var(--ease); }
+.mini-btn:hover { border-color: rgba(255, 255, 255, .2); background: rgba(255, 255, 255, .05); color: var(--text); }
+.board-empty { display: flex; flex-direction: column; align-items: center; gap: .6rem; margin-top: .75rem; padding: 1.4rem 1rem; border: 1px dashed rgba(255, 255, 255, .2); border-radius: .9rem; text-align: center; }
+.board-empty p { max-width: 30rem; margin: 0; font-size: 12.5px; line-height: 1.5; color: var(--soft); }
+.board-empty-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: .5rem; }
+@media (max-width: 767px) {
+  /* On a phone the board is one row you swipe through, so it does not push the ledger a screen down. */
+  .board-grid { display: flex; margin-inline: -1rem; padding-inline: 1rem; overflow-x: auto; scroll-snap-type: x mandatory; scroll-padding-inline: 1rem; scrollbar-width: none; }
+  .board-grid::-webkit-scrollbar { display: none; }
+  .board-card { flex: 0 0 82%; scroll-snap-align: start; }
+}
+
+.insight { overflow: hidden; padding: .75rem .8rem 0; border: 1px solid color-mix(in srgb, var(--link) 22%, transparent); border-radius: .85rem; background: var(--surface-2); box-shadow: 0 10px 28px rgba(0, 0, 0, .35); animation: rise .35s var(--ease) both; }
+.insight.is-done { opacity: .8; }
+.insight-head { display: flex; align-items: baseline; gap: .5rem; }
+.insight-kind { flex: none; padding: .05rem .5rem; border: 1px solid color-mix(in srgb, var(--link) 45%, transparent); border-radius: 999px; font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--link); }
+.insight-title { min-width: 0; font-size: .875rem; font-weight: 600; line-height: 1.3; }
+.insight-figures { display: flex; flex-wrap: wrap; gap: .1rem 1.1rem; margin-top: .5rem; }
+.insight-figure { display: flex; flex-direction: column; }
+.insight-fig-label { font-size: 11px; color: var(--soft); }
+.insight-fig-value { font-size: 1.2rem; font-weight: 600; line-height: 1.2; }
+.insight-sub { margin-top: .15rem; font-size: 11px; color: var(--soft); }
+.insight-chart { position: relative; height: 10.5rem; margin-top: .4rem; overflow: hidden; }
+.insight .insight-chart { height: 7.5rem; }
+/* Without a chart (library missing) the table already says it all: the legend would only repeat it. */
+.insight-chart:not(.has-chart) + .insight-legend { display: none; }
+/* On the board the cards of a row are as tall as the tallest (the donut has a legend): a chart takes the room that is left. */
+.board-card .insight-chart { flex: 1 1 10.5rem; height: auto; min-height: 10.5rem; }
+.chart-host { position: absolute; inset: 0; }
+.insight-tablewrap { margin-top: .4rem; max-height: 12rem; overflow: auto; }
+.insight-empty { margin: .6rem 0 .2rem; font-size: 12px; color: var(--soft); }
+.insight-note { margin: .45rem 0 0; font-size: 11px; line-height: 1.4; color: var(--soft); }
+.insight-warn { color: var(--warn); }
+.insight-table { width: 100%; border-collapse: collapse; font-size: 11.5px; }
+.insight-table th, .insight-table td { padding: .2rem .4rem .2rem 0; text-align: left; font-weight: 400; vertical-align: top; }
+.insight-table thead th { font-size: 11px; color: var(--soft); border-bottom: 1px solid var(--line); }
+.insight-table .insight-num { padding-right: 0; text-align: right; white-space: nowrap; }
+.insight-sum th, .insight-sum td { border-top: 1px solid var(--line); font-weight: 600; }
+.insight-legend { display: flex; flex-direction: column; gap: .15rem; margin: .35rem 0 0; padding: 0; list-style: none; }
+.insight-legend li { display: flex; align-items: center; gap: .45rem; font-size: 11.5px; line-height: 1.5; }
+.legend-dot { width: .6rem; height: .6rem; flex: none; border-radius: 999px; }
+.legend-name { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.legend-val { font-size: 11.5px; }
+.legend-share { width: 2.2rem; text-align: right; font-size: 11px; color: var(--soft); font-variant-numeric: tabular-nums; }
+.insight .proposal-actions, .insight .proposal-result { margin: .6rem -.8rem 0; border-top: 1px solid var(--line); }
+.insight .proposal-actions .btn-primary { flex: 2 1 0; }
+
 /* ---------- activity: who did what ---------- */
 .activity { max-height: 21rem; margin: 0; padding: 0; overflow-y: auto; list-style: none; }
 .activity-row { display: flex; align-items: flex-start; gap: .6rem; padding: .5rem 0; border-top: 1px solid var(--line); font-size: 12.5px; line-height: 1.4; }
