@@ -448,7 +448,15 @@ function renderInvoices() {
   $('#ledgerCount').textContent = state.records.length ? `${invoices} invoice${invoices === 1 ? '' : 's'}${cancels ? ` · ${cancels} cancellation${cancels === 1 ? '' : 's'}` : ''}` : '';
   ledgerVerdictKey = verdictKey(chainVerdict);
   if (!state.records.length) {
-    $('#rows').innerHTML = '<tr><td colspan="6" class="py-8 text-center text-sm text-soft">No invoices yet. Ask the agent to create one, or <button class="link" data-sample="1">load a sample quarter</button>.</td></tr>';
+    $('#rows').innerHTML = `<tr class="row-empty"><td colspan="6"><div class="empty">
+      <div class="empty-title">Your ledger is empty</div>
+      <p>Every invoice you issue becomes a block in the chain above. Start with a sample quarter, or describe your first sale to the agent.</p>
+      <div class="empty-actions">
+        <button class="btn-primary" data-empty="sample">Load a sample quarter</button>
+        <button class="btn-ghost" data-empty="invoice">Invoice someone</button>
+        <a class="btn-ghost" href="#agents" data-empty="agents">Connect your own AI agent</a>
+      </div>
+    </div></td></tr>`;
     return;
   }
   const brokenAt = chainVerdict && !chainVerdict.ok ? chainVerdict.index : -1;
@@ -516,9 +524,9 @@ async function renderChain() {
     track.innerHTML = chainTrackHtml(chainBlocks(state.records, v, { newFrom: chainFx?.newFrom ?? Infinity }));
     chainFx = null;
     track.classList.toggle('sweeping', motion);
-    const items = [...track.querySelectorAll('.block')];
+    const items = [...track.querySelectorAll('.chain-block')];
     items.forEach((el, i) => el.style.setProperty('--d', `${Math.round((i / Math.max(1, items.length - 1)) * (SWEEP_MS - 450))}ms`));
-    const broken = track.querySelector('.block.broken');
+    const broken = track.querySelector('.chain-block.broken');
     if (broken) broken.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'auto' });
     else if (track.querySelector('.is-new')) track.scrollLeft = track.scrollWidth;
     else track.scrollLeft = left;
@@ -649,6 +657,13 @@ function openDetail(r) {
 
 // ---------- events ----------
 
+// Puts a prompt in the agent's box and moves the focus there (the user reviews it and presses Send).
+function askAbout(text) {
+  $('#msg').value = text;
+  $('#agent').scrollIntoView({ behavior: reducedMotion() ? 'auto' : 'smooth', block: 'nearest' });
+  $('#msg').focus({ preventScroll: true });
+}
+
 // One turn with the agent: the question goes out with the ledger context, the answer comes back as text and proposals.
 async function ask(text) {
   text = String(text || '').trim();
@@ -703,7 +718,9 @@ $('#chat').addEventListener('click', async (ev) => {
 });
 
 $('#rows').addEventListener('click', async (ev) => {
-  if (ev.target.closest('[data-sample]')) return loadSample();
+  const empty = ev.target.closest('[data-empty]');
+  if (empty?.dataset.empty === 'sample') return loadSample();
+  if (empty?.dataset.empty === 'invoice') return askAbout(EXAMPLES[0]);
   const b = ev.target.closest('button[data-i]');
   if (!b) return;
   const rec = state.records[Number(b.dataset.i)];

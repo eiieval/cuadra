@@ -137,6 +137,11 @@ a.badge:hover { background: rgba(255, 255, 255, .16); }
 .ledger tbody tr:hover { background: rgba(255, 255, 255, .02); }
 
 .ledger .c-hash { display: none; }
+.ledger tbody tr.row-empty, .ledger tbody tr.row-empty:hover { border-top: 0; background: none; }
+.empty { display: flex; flex-direction: column; align-items: center; gap: .55rem; margin-top: .6rem; padding: 1.7rem 1rem; border: 1px dashed rgba(255, 255, 255, .2); border-radius: .9rem; text-align: center; }
+.empty-title { font-size: .95rem; font-weight: 600; }
+.empty p { max-width: 30rem; margin: 0; font-size: 12.5px; line-height: 1.5; color: var(--soft); }
+.empty-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: .5rem; margin-top: .35rem; }
 .ledger tbody tr.row-bad { background: color-mix(in srgb, var(--bad) 8%, transparent); }
 @keyframes row-flash { from { background-color: color-mix(in srgb, var(--ok) 24%, transparent); } to { background-color: transparent; } }
 .row-flash > td { animation: row-flash 1.5s ease-out calc(var(--flash-elapsed, 0ms) * -1) both; }
@@ -151,22 +156,22 @@ a.badge:hover { background: rgba(255, 255, 255, .16); }
 .chain-link.broken { color: var(--bad); }
 .chain-link.unverifiable { color: color-mix(in srgb, var(--soft) 60%, transparent); }
 
-.block { display: flex; flex-direction: column; justify-content: space-between; gap: .1rem; width: 7.75rem; height: 4.5rem; padding: .45rem .55rem .4rem; border: 1px solid var(--line); border-radius: .7rem; background: var(--surface-2); color: var(--text); font-size: 11px; line-height: 1.2; text-align: left; transition: border-color .3s var(--ease), background-color .3s var(--ease), transform .2s var(--ease); }
-button.block:hover { transform: translateY(-2px); border-color: rgba(255, 255, 255, .4); }
+.chain-block { display: flex; flex-direction: column; justify-content: space-between; gap: .1rem; width: 7.75rem; height: 4.5rem; padding: .45rem .55rem .4rem; border: 1px solid var(--line); border-radius: .7rem; background: var(--surface-2); color: var(--text); font-size: 11px; line-height: 1.2; text-align: left; transition: border-color .3s var(--ease), background-color .3s var(--ease), transform .2s var(--ease); }
+button.chain-block:hover { transform: translateY(-2px); border-color: rgba(255, 255, 255, .4); }
 .block-top { display: flex; min-width: 0; align-items: center; gap: .3rem; }
 .block-top > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .block-ic { width: .9rem; height: .9rem; flex: none; }
 .block-amt { font-size: .8125rem; font-weight: 500; }
 .block-foot { display: flex; align-items: center; justify-content: space-between; }
 .block-mark { width: .8rem; height: .8rem; flex: none; }
-.block.verified { border-color: color-mix(in srgb, var(--ok) 36%, transparent); background: color-mix(in srgb, var(--ok) 5%, var(--surface-2)); }
-.block.verified .block-mark { color: var(--ok); }
-.block.anulacion.verified { border-color: rgba(255, 255, 255, .2); background: rgba(255, 255, 255, .04); }
-.block.anulacion.verified .block-mark { color: var(--soft); }
-.block.broken { border-color: var(--bad); background: color-mix(in srgb, var(--bad) 12%, var(--surface-2)); box-shadow: 0 0 0 3px color-mix(in srgb, var(--bad) 15%, transparent); }
-.block.broken .block-top, .block.broken .block-mark { color: var(--bad); }
-.block.unverifiable { border: 1px dashed rgba(255, 255, 255, .26); background: transparent; color: var(--soft); }
-.block.pending { border-color: color-mix(in srgb, var(--warn) 45%, transparent); }
+.chain-block.verified { border-color: color-mix(in srgb, var(--ok) 36%, transparent); background: color-mix(in srgb, var(--ok) 5%, var(--surface-2)); }
+.chain-block.verified .block-mark { color: var(--ok); }
+.chain-block.anulacion.verified { border-color: rgba(255, 255, 255, .2); background: rgba(255, 255, 255, .04); }
+.chain-block.anulacion.verified .block-mark { color: var(--soft); }
+.chain-block.broken { border-color: var(--bad); background: color-mix(in srgb, var(--bad) 12%, var(--surface-2)); box-shadow: 0 0 0 3px color-mix(in srgb, var(--bad) 15%, transparent); }
+.chain-block.broken .block-top, .chain-block.broken .block-mark { color: var(--bad); }
+.chain-block.unverifiable { border: 1px dashed rgba(255, 255, 255, .26); background: transparent; color: var(--soft); }
+.chain-block.pending { border-color: color-mix(in srgb, var(--warn) 45%, transparent); }
 .block-collapsed { width: 4.25rem; align-items: center; justify-content: center; text-align: center; }
 .block-ghost { width: 15rem; align-items: flex-start; justify-content: center; border-style: dashed; border-color: rgba(255, 255, 255, .24); background: transparent; }
 
@@ -174,10 +179,10 @@ button.block:hover { transform: translateY(-2px); border-color: rgba(255, 255, 2
 @keyframes sweep { from { border-style: solid; border-color: var(--warn); background-color: color-mix(in srgb, var(--warn) 10%, var(--surface-2)); } 40% { box-shadow: 0 0 18px color-mix(in srgb, var(--warn) 40%, transparent); } }
 @keyframes drop-in { from { opacity: 0; transform: translateY(-18px) scale(.92); } to { opacity: 1; transform: none; } }
 @keyframes snap { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-3px); } 55% { transform: translateX(3px); } 80% { transform: translateX(-1.5px); } }
-.chain-track.sweeping .block { animation: sweep .45s var(--ease) var(--d, 0ms) backwards; }
-.chain-track .block.is-new { animation: drop-in .4s var(--ease) both; }
-.chain-track.sweeping .block.is-new { animation: drop-in .4s var(--ease) both, sweep .45s var(--ease) var(--d, 0ms) backwards; }
-.chain-track.sweeping .block.broken { animation: sweep .45s var(--ease) var(--d, 0ms) backwards, snap .4s ease-out calc(var(--d, 0ms) + .3s); }
+.chain-track.sweeping .chain-block { animation: sweep .45s var(--ease) var(--d, 0ms) backwards; }
+.chain-track .chain-block.is-new { animation: drop-in .4s var(--ease) both; }
+.chain-track.sweeping .chain-block.is-new { animation: drop-in .4s var(--ease) both, sweep .45s var(--ease) var(--d, 0ms) backwards; }
+.chain-track.sweeping .chain-block.broken { animation: sweep .45s var(--ease) var(--d, 0ms) backwards, snap .4s ease-out calc(var(--d, 0ms) + .3s); }
 
 /* ---------- the agent as a colleague: proposals as paper, engine checks, plans ---------- */
 .agent-intro { display: flex; flex-direction: column; gap: .85rem; padding-top: .15rem; font-size: .875rem; line-height: 1.5; color: var(--soft); }

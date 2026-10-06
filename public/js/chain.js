@@ -92,19 +92,19 @@ const WORD = { verified: 'verified', broken: 'altered, hash mismatch', unverifia
 function blockHtml(b) {
   const link = b.linkIn ? `<span class="chain-link ${b.linkIn}" aria-hidden="true">${LINK[b.linkIn]}</span>` : '';
   if (b.kind === 'collapsed') {
-    return `<li class="chain-item">${link}<div class="block block-collapsed ${b.state}" title="${esc(b.tip)}"><span class="num text-sm font-semibold">+${b.count}</span><span class="text-[11px] text-soft">earlier</span></div></li>`;
+    return `<li class="chain-item">${link}<div class="chain-block block-collapsed ${b.state}" title="${esc(b.tip)}"><span class="num text-sm font-semibold">+${b.count}</span><span class="text-[11px] text-soft">earlier</span></div></li>`;
   }
   const icon = b.state === 'broken' ? ICONS.broken : ICONS[b.kind];
   const head = b.kind === 'anulacion' ? '<span class="font-semibold">Cancels</span>' : `<span class="num font-semibold">${esc(b.number)}</span>`;
   const body = b.kind === 'anulacion' ? `<span class="num block-amt text-soft">${esc(b.cancels)}</span>` : `<span class="num block-amt">${esc(eur(b.amount))}</span>`;
   const label = b.kind === 'anulacion' ? `Cancels ${b.cancels}, cancellation record` : `${b.number}, invoice, ${eur(b.amount)}`;
-  return `<li class="chain-item">${link}<button type="button" class="block ${b.kind} ${b.state}${b.isNew ? ' is-new' : ''}" data-i="${b.index}" title="${esc(b.tip)}" aria-label="${esc(`${label}, hash ${b.hash6}, ${WORD[b.state]}. Open details.`)}">
+  return `<li class="chain-item">${link}<button type="button" class="chain-block ${b.kind} ${b.state}${b.isNew ? ' is-new' : ''}" data-i="${b.index}" title="${esc(b.tip)}" aria-label="${esc(`${label}, hash ${b.hash6}, ${WORD[b.state]}. Open details.`)}">
     <span class="block-top">${icon}${head}</span>${body}
     <span class="block-foot"><span class="num text-soft">${esc(b.hash6)}</span>${MARK[b.state]}</span>
   </button></li>`;
 }
 
 // Empty ledger: a ghost block instead of an empty strip.
-const GHOST = '<li class="chain-item"><div class="block block-ghost"><span class="text-[11px] font-semibold">Your first record will appear here</span><span class="text-[11px] text-soft">invoice or cancellation</span></div></li>';
+const GHOST = '<li class="chain-item"><div class="chain-block block-ghost"><span class="text-[11px] font-semibold">Your first record will appear here</span><span class="text-[11px] text-soft">invoice or cancellation</span></div></li>';
 
 export const chainTrackHtml = (blocks) => (blocks.length ? blocks.map(blockHtml).join('') : GHOST);
