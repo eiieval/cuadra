@@ -38,6 +38,11 @@ let chainSig = '';
 let chainRun = 0;
 let chainFx = null; // { newFrom }: records at or after this index just entered the chain and animate in
 let chainNow = null;
+let chainVerdict = null; // latest verifyChain() result, also used to mark an altered record in the ledger
+let ledgerVerdictKey = 'none';
+let flash = null; // { number, at }: the ledger row of a record that has just entered the chain lights up
+const FLASH_MS = 1500;
+const verdictKey = (v) => (!v ? 'none' : v.ok ? 'ok' : `bad${v.index}`);
 let statusTimer;
 let state = (() => { try { return JSON.parse(localStorage.getItem(KEY)); } catch { return null; } })();
 const firstVisit = !state;
@@ -57,11 +62,14 @@ async function post(url, body) {
 }
 
 let toastTimer;
-function toast(text) {
-  $('#toast').textContent = text;
-  $('#toast').classList.remove('hidden');
+const bit = (text, cls = 'num') => { const s = document.createElement('span'); s.className = cls; s.textContent = text; return s; };
+// content: a string, or a list of strings and nodes (built with bit()), never HTML.
+function toast(content) {
+  const t = $('#toast');
+  t.replaceChildren(...[].concat(content));
+  t.classList.remove('hidden');
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => $('#toast').classList.add('hidden'), 4500);
+  toastTimer = setTimeout(() => t.classList.add('hidden'), 5000);
 }
 
 const today = () => isoToday();
@@ -139,10 +147,15 @@ async function issue(inv, withPaypal) {
   Object.assign(rec, { email: inv.recipient.email, dueDate: addDays(today(), inv.dueDays) });
   state.records.push(rec);
   chainFx = { newFrom: state.records.length - 1 };
+  flash = { number, at: Date.now() };
   save();
   await renderAll();
+  const issued = (extra = '') => toast([bit(number, 'num font-semibold'), ' issued · hash ', bit(`${rec.hash.slice(0, 6)}…`), extra]);
+  issued();
+  $('#chainStrip').scrollIntoView({ behavior: reducedMotion() ? 'auto' : 'smooth', block: 'nearest' });
   if (!withPaypal) return { ok: true, number, text: `Issued ${number}. VeriFactu record chained.` };
   const error = await collect(rec);
+  if (!error) issued(' · sent with PayPal');
   return error ? { ok: false, number, text: `Issued ${number}, but PayPal failed: ${error}` } : { ok: true, number, text: `Issued ${number} and sent with PayPal.` };
 }
 
@@ -199,8 +212,11 @@ async function annul(rec, reason) {
     if (r.error) return { ok: false, text: `PayPal could not cancel ${rec.number}: ${r.error}. Nothing was changed.` };
     rec.paypal.status = r.status;
   }
-  state.records.push(await buildAnulacion({ issuer: state.company, target: rec, prev: state.records.at(-1), reason }));
+  const record = await buildAnulacion({ issuer: state.company, target: rec, prev: state.records.at(-1), reason });
+  state.records.push(record);
   chainFx = { newFrom: state.records.length - 1 };
+  flash = { number: rec.number, at: Date.now() };
+  toast([bit(rec.number, 'num font-semibold'), ' cancelled · cancellation hash ', bit(`${record.hash.slice(0, 6)}…`)]);
   return { ok: true, text: `${rec.number} cancelled with a chained VeriFactu cancellation record${rec.paypal?.id ? '; the PayPal invoice is cancelled too' : ''}.` };
 }
 
@@ -394,36 +410,44 @@ function renderKpis() {
   $('#kpis').innerHTML = k.map(([l, v, sub]) => `<div class="panel kpi"><div class="label">${esc(l)}</div><div class="kpi-value num">${esc(v)}</div><div class="kpi-sub">${sub}</div></div>`).join('');
 }
 
+// The ledger. Below 640px each row is drawn as a card (see .ledger in styles/input.css), so every cell has a role class.
 function renderInvoices() {
   const invoices = invoicesOf(state.records).length;
   const cancels = state.records.length - invoices;
   $('#ledgerCount').textContent = state.records.length ? `${invoices} invoice${invoices === 1 ? '' : 's'}${cancels ? ` · ${cancels} cancellation${cancels === 1 ? '' : 's'}` : ''}` : '';
+  ledgerVerdictKey = verdictKey(chainVerdict);
   if (!state.records.length) {
     $('#rows').innerHTML = '<tr><td colspan="6" class="py-8 text-center text-sm text-soft">No invoices yet. Ask the agent to create one, or <button class="link" data-sample="1">load a sample quarter</button>.</td></tr>';
     return;
   }
+  const brokenAt = chainVerdict && !chainVerdict.ok ? chainVerdict.index : -1;
+  const lit = (number) => flash && flash.number === number && Date.now() - flash.at < FLASH_MS;
   $('#rows').innerHTML = state.records.map((r, i) => ({ r, i })).reverse().map(({ r, i }) => {
+    const mark = `${lit(r.number) ? ' row-flash' : ''}${i === brokenAt ? ' row-bad' : ''}`;
+    const altered = i === brokenAt ? ' <span class="badge badge-bad" title="This record no longer matches its hash">Altered</span>' : '';
     if (isAnulacion(r)) {
-      return `<tr class="text-soft">
-        <td class="num whitespace-nowrap text-xs">↳ ${esc(r.number)}</td>
-        <td class="text-xs" colspan="2">Cancellation record${r.reason ? ` · ${esc(r.reason)}` : ''}</td>
-        <td><span class="badge badge-mute">Anulación</span></td><td class="hidden xl:table-cell"></td>
-        <td class="text-right"><button class="btn-ghost !min-h-8" data-i="${i}" data-do="view">View</button></td></tr>`;
+      return `<tr class="row row-anul text-soft${mark}">
+        <td class="c-num num whitespace-nowrap text-xs">↳ ${esc(r.number)}</td>
+        <td class="c-client text-xs" colspan="2">Cancellation record${r.reason ? ` · ${esc(r.reason)}` : ''}</td>
+        <td class="c-status"><span class="badge badge-mute">Anulación</span>${altered}</td><td class="c-due hidden xl:table-cell"></td>
+        <td class="c-actions text-right"><button class="btn-ghost !min-h-8" data-i="${i}" data-do="view">View</button></td></tr>`;
     }
     const st = status(r);
     const action = !OPEN(st) ? '' : r.paypal?.id
       ? `<button class="btn-ghost !min-h-8" data-i="${i}" data-do="remind">Remind</button>`
       : `<button class="btn-ghost !min-h-8" data-i="${i}" data-do="collect" title="Send with PayPal">Collect</button>`;
     const refresh = r.paypal?.id ? `<button class="btn-ghost !min-h-8" data-i="${i}" data-do="refresh" title="Refresh PayPal status" aria-label="Refresh PayPal status">↻</button>` : '';
-    return `<tr class="${st === 'CANCELLED' ? 'text-soft' : ''}">
-      <td class="num whitespace-nowrap text-xs ${st === 'CANCELLED' ? 'line-through' : ''}" title="${esc(r.hash)}">${esc(r.number)}</td>
-      <td>${esc(r.recipient?.name)}${r.sample ? ' <span class="text-[11px] text-soft">sample</span>' : ''}</td>
-      <td class="num whitespace-nowrap text-right">${eur(r.total)}</td>
-      <td><span class="${BADGE[st] || 'badge'}" title="${esc(r.paypal?.error || (r.paypal?.id ? 'On PayPal' : ''))}">${esc(st.replace(/_/g, ' '))}</span>${r.paypal?.id ? ' <span class="text-[11px] text-link">PayPal</span>' : ''}</td>
-      <td class="hidden whitespace-nowrap text-xs text-soft xl:table-cell">${r.dueDate && OPEN(st) ? esc(fmtDate(r.dueDate)) : ''}</td>
-      <td class="space-x-1 whitespace-nowrap text-right"><button class="btn-ghost !min-h-8" data-i="${i}" data-do="view">View</button>${refresh}${action}</td>
+    return `<tr class="row${st === 'CANCELLED' ? ' text-soft' : ''}${mark}">
+      <td class="c-num num whitespace-nowrap text-xs ${st === 'CANCELLED' ? 'line-through' : ''}" title="${esc(r.hash)}">${esc(r.number)}<span class="c-hash text-soft">${esc(r.hash.slice(0, 6))}</span></td>
+      <td class="c-client">${esc(r.recipient?.name)}${r.sample ? ' <span class="text-[11px] text-soft">sample</span>' : ''}</td>
+      <td class="c-total num whitespace-nowrap text-right">${eur(r.total)}</td>
+      <td class="c-status"><span class="${BADGE[st] || 'badge'}" title="${esc(r.paypal?.error || (r.paypal?.id ? 'On PayPal' : ''))}">${esc(st.replace(/_/g, ' '))}</span>${r.paypal?.id ? ' <span class="text-[11px] text-link">PayPal</span>' : ''}${altered}</td>
+      <td class="c-due hidden whitespace-nowrap text-xs text-soft xl:table-cell">${r.dueDate && OPEN(st) ? esc(fmtDate(r.dueDate)) : ''}</td>
+      <td class="c-actions space-x-1 whitespace-nowrap text-right"><button class="btn-ghost !min-h-8" data-i="${i}" data-do="view">View</button>${refresh}${action}</td>
     </tr>`;
   }).join('');
+  // A re-render must not restart the highlight of a record that has just been issued.
+  if (flash) $('#rows').querySelectorAll('.row-flash').forEach((tr) => tr.style.setProperty('--flash-elapsed', `${Date.now() - flash.at}ms`));
 }
 
 function renderVat() {
@@ -443,6 +467,8 @@ async function renderChain() {
   const v = await verifyChain(state.records);
   if (run !== chainRun) return; // a newer render superseded this one
   const track = $('#chainTrack');
+  chainVerdict = v;
+  if (verdictKey(v) !== ledgerVerdictKey) renderInvoices();
   chainNow = chainStatus(state.records, v);
   const sig = chainSignature();
   if (sig !== chainSig) {
