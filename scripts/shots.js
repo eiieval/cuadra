@@ -4,14 +4,18 @@
 // Besides the pictures it asserts what the eye should not have to find: no console errors, no 4xx/5xx, no horizontal
 // scroll of the page, the activity log of the #selftest flow, the print rules of the verification page, the tour
 // undoing its tamper test, the tour timing, prefers-reduced-motion, and the behaviours that existed before round 2
-// (ledger buttons, detail dialog, exports...). It borrows the Playwright of the sibling ops/video folder, like scripts/social-card.js.
+// (ledger buttons, detail dialog, exports...). Round 2B adds the AG Grid ledger (status filter, totals row, CSV, keyboard,
+// and the plain-table fallback when the file is blocked, slow, tampered or throws), the Insights board with AG Charts (pin,
+// remove, limit of six, CSV, collapse, the table fallback), the agent's own sentences and the MCP terminal replay.
+// It borrows the Playwright of the sibling ops/video folder, like scripts/social-card.js.
 // Usage: node scripts/shots.js [outDir]
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
+import { transcriptLines } from '../public/js/terminal.js';
 
-const here = (p) => fileURLToPath(new URL(p, import.meta.url));
+const here =(p) => fileURLToPath(new URL(p, import.meta.url));
 const OUT = process.argv[2] || here('../../hackathons/paypal/galeria/ronda2/');
 const PORT = 3080;
 const BASE = `http://localhost:${PORT}`;
@@ -595,6 +599,52 @@ try {
       }
       await ctx.close();
     }
+  }
+
+  // 13. Cuadra for AI agents: the recorded MCP session replays line by line in a terminal, next to the Claude Desktop config.
+  {
+    const expected = transcriptLines(JSON.parse(readFileSync(here('../public/mcp-transcript.json'), 'utf8'))).length;
+    for (const view of VIEWS) {
+      const ctx = await newContext({ ...view.opts });
+      await ctx.addInitScript(() => localStorage.setItem('cuadra-tour-v1', '1'));
+      const page = await ctx.newPage();
+      watch(page, `${view.name} agents`);
+      let fetched = 0;
+      page.on('request', (r) => { if (/mcp-transcript\.json/.test(r.url())) fetched++; });
+      await page.goto(`${BASE}/`, { waitUntil: 'networkidle' });
+      await settle(page, 1200);
+      check(`[${view.name}] agents: the transcript is not fetched, nor the terminal filled, until the section scrolls into view`, fetched === 0 && (await page.locator('#termBody .term-line').count()) === 0);
+      await page.evaluate(() => document.querySelector('#agents').scrollIntoView({ block: 'start' }));
+      await settle(page, 4200);
+      const mid = await page.locator('#termBody .term-line').count();
+      check(`[${view.name}] agents: the session replays line by line (some lines are on screen, not all, and the caret is blinking)`, fetched === 1 && mid > 8 && mid < expected && (await page.locator('#termBody').evaluate((e) => e.classList.contains('is-playing'))));
+      await page.evaluate(() => { document.querySelector('#openAgent').style.visibility = 'hidden'; });
+      await page.locator('#agents').screenshot({ path: `${OUT}/13-mcp-terminal-midreplay-${view.name}.png` });
+      await page.waitForFunction(() => !document.querySelector('#termBody').classList.contains('is-playing'), null, { timeout: 45000 });
+      const text = await page.locator('#termBody').innerText();
+      check(`[${view.name}] agents: the whole session ends with the server's own figures (217.80, a mock PayPal id, SENT, ok) and its closing line, ${expected} lines in all`, (await page.locator('#termBody .term-line').count()) === expected && /"total": "217\.80"/.test(text) && /INV2-MOCK-0001/.test(text) && /"collect_with_paypal": true/.test(text) && /"status": "SENT"/.test(text) && /13 JSON-RPC messages, 6 steps/.test(text) && fetched === 1);
+      await page.locator('#termBody').evaluate((e) => { e.scrollTop = e.scrollHeight * 0.55; });
+      await settle(page, 300);
+      await page.locator('#agents').screenshot({ path: `${OUT}/13b-mcp-terminal-issue-${view.name}.png` });
+      check(`[${view.name}] agents: the section has the Claude Desktop configuration and the 11 tools next to the terminal, and nothing makes the page scroll sideways`, /mcpServers/.test(await page.locator('#agents pre').innerText()) && /export_verifactu_xml/.test(await page.locator('#agents').innerText()) && (await overflow(page)) <= 0);
+      await page.click('#termReplay');
+      await settle(page, 700);
+      const again = await page.locator('#termBody .term-line').count();
+      check(`[${view.name}] agents: Replay starts the session again from the first line`, again > 0 && again < 30 && (await page.locator('#termBody').evaluate((e) => e.classList.contains('is-playing'))) && (await page.locator('#termBody .term-line').first().innerText()) === '$ node mcp/server.js' && fetched === 1);
+      await ctx.close();
+    }
+    // With reduced motion the whole session is there at once, and Replay shows it at once too.
+    const calm = await newContext({ ...VIEWS[0].opts, reducedMotion: 'reduce' });
+    const still = await calm.newPage();
+    watch(still, 'reduced motion agents');
+    await still.goto(`${BASE}/`, { waitUntil: 'networkidle' });
+    await still.evaluate(() => document.querySelector('#agents').scrollIntoView({ block: 'start' }));
+    await settle(still, 900);
+    const whole = (await still.locator('#termBody .term-line').count()) === expected && !(await still.locator('#termBody').evaluate((e) => e.classList.contains('is-playing')));
+    await still.click('#termReplay');
+    await settle(still, 300);
+    check('reduced motion: the terminal shows the whole session at once, with no caret, and Replay does the same', whole && (await still.locator('#termBody .term-line').count()) === expected && !(await still.locator('#termBody').evaluate((e) => e.classList.contains('is-playing'))));
+    await calm.close();
   }
 } finally {
   await browser.close();

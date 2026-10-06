@@ -1,0 +1,744 @@
+{
+ "title": "An AI agent invoices and collects through Cuadra's MCP server",
+ "note": "A real run of mcp/server.js over stdio, recorded by scripts/mcp-demo.js. PayPal is the in-memory stand-in (hence the MOCK ids) and the ledger is a throwaway file, so no network and no credentials were involved. Nothing in this file is edited.",
+ "server": {
+  "command": "node mcp/server.js",
+  "name": "cuadra",
+  "version": "0.2.0",
+  "protocol": "2025-06-18"
+ },
+ "steps": [
+  {
+   "label": "The client and the server shake hands",
+   "lines": [
+    {
+     "dir": "out",
+     "msg": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "method": "initialize",
+      "params": {
+       "protocolVersion": "2025-06-18",
+       "capabilities": {},
+       "clientInfo": {
+        "name": "claude-desktop",
+        "version": "1.0.0"
+       }
+      }
+     }
+    },
+    {
+     "dir": "in",
+     "msg": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+       "protocolVersion": "2025-06-18",
+       "capabilities": {
+        "tools": {
+         "listChanged": false
+        }
+       },
+       "serverInfo": {
+        "name": "cuadra",
+        "title": "Cuadra",
+        "version": "0.2.0"
+       },
+       "instructions": "Cuadra issues Spanish VeriFactu invoices and collects them with PayPal. Call draft_invoice first and show the user the totals and warnings; call issue_invoice only after the user confirms. Never cancel an invoice or record a payment unless the user asked for it. Figures for VAT questions must come from vat_return or list_invoices, never from your own arithmetic."
+      }
+     }
+    },
+    {
+     "dir": "out",
+     "msg": {
+      "jsonrpc": "2.0",
+      "method": "notifications/initialized"
+     }
+    }
+   ]
+  },
+  {
+   "label": "The agent asks which tools it can call",
+   "lines": [
+    {
+     "dir": "out",
+     "msg": {
+      "jsonrpc": "2.0",
+      "id": 2,
+      "method": "tools/list",
+      "params": {}
+     }
+    },
+    {
+     "dir": "in",
+     "msg": {
+      "jsonrpc": "2.0",
+      "id": 2,
+      "result": {
+       "tools": [
+        {
+         "name": "draft_invoice",
+         "title": "Draft invoice",
+         "description": "Validate an invoice and compute its totals without issuing anything. Always show the draft to the user before issue_invoice.",
+         "inputSchema": {
+          "type": "object",
+          "properties": {
+           "recipient": {
+            "type": "object",
+            "properties": {
+             "name": {
+              "type": "string"
+             },
+             "nif": {
+              "type": "string",
+              "description": "Spanish NIF, CIF or NIE"
+             },
+             "email": {
+              "type": "string",
+              "description": "Where PayPal sends the invoice"
+             }
+            },
+            "required": [
+             "name"
+            ]
+           },
+           "lines": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 20,
+            "items": {
+             "type": "object",
+             "properties": {
+              "description": {
+               "type": "string"
+              },
+              "qty": {
+               "type": "number",
+               "exclusiveMinimum": 0
+              },
+              "price": {
+               "type": "number",
+               "exclusiveMinimum": 0,
+               "description": "Unit price in EUR before VAT"
+              },
+              "vat": {
+               "type": "number",
+               "enum": [
+                0,
+                4,
+                10,
+                21
+               ],
+               "description": "Spanish VAT rate"
+              }
+             },
+             "required": [
+              "description",
+              "qty",
+              "price",
+              "vat"
+             ]
+            }
+           },
+           "description": {
+            "type": "string"
+           },
+           "due_days": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 90,
+            "default": 15
+           }
+          },
+          "required": [
+           "recipient",
+           "lines"
+          ]
+         },
+         "annotations": {
+          "title": "Draft invoice",
+          "readOnlyHint": true,
+          "openWorldHint": false
+         }
+        },
+        {
+         "name": "issue_invoice",
+         "title": "Issue invoice",
+         "description": "Issue a VeriFactu invoice: append a hash-chained RegistroAlta to the ledger and, by default, send it with PayPal Invoicing so the client can pay online. Only after the user confirmed the draft.",
+         "inputSchema": {
+          "type": "object",
+          "properties": {
+           "recipient": {
+            "type": "object",
+            "properties": {
+             "name": {
+              "type": "string"
+             },
+             "nif": {
+              "type": "string",
+              "description": "Spanish NIF, CIF or NIE"
+             },
+             "email": {
+              "type": "string",
+              "description": "Where PayPal sends the invoice"
+             }
+            },
+            "required": [
+             "name"
+            ]
+           },
+           "lines": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 20,
+            "items": {
+             "type": "object",
+             "properties": {
+              "description": {
+               "type": "string"
+              },
+              "qty": {
+               "type": "number",
+               "exclusiveMinimum": 0
+              },
+              "price": {
+               "type": "number",
+               "exclusiveMinimum": 0,
+               "description": "Unit price in EUR before VAT"
+              },
+              "vat": {
+               "type": "number",
+               "enum": [
+                0,
+                4,
+                10,
+                21
+               ],
+               "description": "Spanish VAT rate"
+              }
+             },
+             "required": [
+              "description",
+              "qty",
+              "price",
+              "vat"
+             ]
+            }
+           },
+           "description": {
+            "type": "string"
+           },
+           "due_days": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 90,
+            "default": 15
+           },
+           "collect_with_paypal": {
+            "type": "boolean",
+            "default": true
+           }
+          },
+          "required": [
+           "recipient",
+           "lines"
+          ]
+         },
+         "annotations": {
+          "title": "Issue invoice",
+          "readOnlyHint": false,
+          "destructiveHint": false,
+          "idempotentHint": false,
+          "openWorldHint": true
+         }
+        },
+        {
+         "name": "list_invoices",
+         "title": "List invoices",
+         "description": "List invoices with their status (ISSUED, SENT, OVERDUE, PAID, CANCELLED), due date and PayPal link.",
+         "inputSchema": {
+          "type": "object",
+          "properties": {
+           "status": {
+            "type": "string",
+            "enum": [
+             "ALL",
+             "OPEN",
+             "OVERDUE",
+             "PAID",
+             "CANCELLED"
+            ],
+            "default": "ALL"
+           },
+           "client": {
+            "type": "string",
+            "description": "Filter by client name"
+           }
+          }
+         },
+         "annotations": {
+          "title": "List invoices",
+          "readOnlyHint": true,
+          "openWorldHint": false
+         }
+        },
+        {
+         "name": "sync_paypal",
+         "title": "Sync PayPal statuses",
+         "description": "Refresh the status of every open invoice that is on PayPal (paid, partially paid, cancelled…).",
+         "inputSchema": {
+          "type": "object",
+          "properties": {}
+         },
+         "annotations": {
+          "title": "Sync PayPal statuses",
+          "readOnlyHint": false,
+          "destructiveHint": false,
+          "idempotentHint": true,
+          "openWorldHint": true
+         }
+        },
+        {
+         "name": "collect_with_paypal",
+         "title": "Collect with PayPal",
+         "description": "Send an already issued, unpaid invoice that is not on PayPal yet as a PayPal invoice, with its VeriFactu verification link.",
+         "inputSchema": {
+          "type": "object",
+          "properties": {
+           "number": {
+            "type": "string",
+            "description": "Invoice number, e.g. CU2026-0001"
+           }
+          },
+          "required": [
+           "number"
+          ]
+         },
+         "annotations": {
+          "title": "Collect with PayPal",
+          "readOnlyHint": false,
+          "destructiveHint": false,
+          "idempotentHint": false,
+          "openWorldHint": true
+         }
+        },
+        {
+         "name": "send_reminder",
+         "title": "Send payment reminder",
+         "description": "Send a PayPal payment reminder for an unpaid invoice that is on PayPal.",
+         "inputSchema": {
+          "type": "object",
+          "properties": {
+           "number": {
+            "type": "string",
+            "description": "Invoice number, e.g. CU2026-0001"
+           }
+          },
+          "required": [
+           "number"
+          ]
+         },
+         "annotations": {
+          "title": "Send payment reminder",
+          "readOnlyHint": false,
+          "destructiveHint": false,
+          "idempotentHint": false,
+          "openWorldHint": true
+         }
+        },
+        {
+         "name": "record_payment",
+         "title": "Record payment",
+         "description": "Record that an invoice was paid outside PayPal (bank transfer, cash). Also marks it paid in PayPal if it is there.",
+         "inputSchema": {
+          "type": "object",
+          "properties": {
+           "number": {
+            "type": "string",
+            "description": "Invoice number, e.g. CU2026-0001"
+           },
+           "method": {
+            "type": "string",
+            "enum": [
+             "BANK_TRANSFER",
+             "CASH",
+             "OTHER"
+            ],
+            "default": "BANK_TRANSFER"
+           },
+           "date": {
+            "type": "string",
+            "description": "YYYY-MM-DD, default today"
+           }
+          },
+          "required": [
+           "number"
+          ]
+         },
+         "annotations": {
+          "title": "Record payment",
+          "readOnlyHint": false,
+          "destructiveHint": false,
+          "idempotentHint": true,
+          "openWorldHint": true
+         }
+        },
+        {
+         "name": "cancel_invoice",
+         "title": "Cancel invoice",
+         "description": "Annul an unpaid invoice issued by mistake: cancels it in PayPal and appends a VeriFactu RegistroAnulacion to the chain. The original record is never edited. Paid invoices need a corrective invoice instead.",
+         "inputSchema": {
+          "type": "object",
+          "properties": {
+           "number": {
+            "type": "string",
+            "description": "Invoice number, e.g. CU2026-0001"
+           },
+           "reason": {
+            "type": "string",
+            "maxLength": 200
+           }
+          },
+          "required": [
+           "number",
+           "reason"
+          ]
+         },
+         "annotations": {
+          "title": "Cancel invoice",
+          "readOnlyHint": false,
+          "destructiveHint": true,
+          "idempotentHint": false,
+          "openWorldHint": true
+         }
+        },
+        {
+         "name": "vat_return",
+         "title": "Modelo 303 VAT draft",
+         "description": "Draft of the quarterly Modelo 303 output VAT (boxes 01-09 and 27) from the ledger, with the filing deadline. Output VAT only; deductible VAT from expenses is not included.",
+         "inputSchema": {
+          "type": "object",
+          "properties": {
+           "quarter": {
+            "type": "string",
+            "pattern": "^\\d{4}-Q[1-4]$",
+            "description": "e.g. 2026-Q3; default is the return due now"
+           }
+          }
+         },
+         "annotations": {
+          "title": "Modelo 303 VAT draft",
+          "readOnlyHint": true,
+          "openWorldHint": false
+         }
+        },
+        {
+         "name": "verify_ledger",
+         "title": "Verify ledger",
+         "description": "Check the VeriFactu hash chain of the whole ledger: links, hashes, amounts and cancellations.",
+         "inputSchema": {
+          "type": "object",
+          "properties": {}
+         },
+         "annotations": {
+          "title": "Verify ledger",
+          "readOnlyHint": true,
+          "openWorldHint": false
+         }
+        },
+        {
+         "name": "export_verifactu_xml",
+         "title": "Export VeriFactu XML",
+         "description": "Return the RegistroAlta / RegistroAnulacion XML of one invoice, or of the whole ledger.",
+         "inputSchema": {
+          "type": "object",
+          "properties": {
+           "number": {
+            "type": "string",
+            "description": "Omit for every record"
+           }
+          }
+         },
+         "annotations": {
+          "title": "Export VeriFactu XML",
+          "readOnlyHint": true,
+          "openWorldHint": false
+         }
+        }
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "label": "\"Invoice Acme Studio SL for 3 hours of consulting at €60.\" Claude drafts it first: nothing is issued yet",
+   "lines": [
+    {
+     "dir": "out",
+     "msg": {
+      "jsonrpc": "2.0",
+      "id": 3,
+      "method": "tools/call",
+      "params": {
+       "name": "draft_invoice",
+       "arguments": {
+        "recipient": {
+         "name": "Acme Studio SL",
+         "nif": "B12345674",
+         "email": "billing@acme.example"
+        },
+        "lines": [
+         {
+          "description": "Consulting",
+          "qty": 3,
+          "price": 60,
+          "vat": 21
+         }
+        ],
+        "description": "Consulting hours",
+        "due_days": 15
+       }
+      }
+     }
+    },
+    {
+     "dir": "in",
+     "msg": {
+      "jsonrpc": "2.0",
+      "id": 3,
+      "result": {
+       "content": [
+        {
+         "type": "text",
+         "text": "{\n  \"ok\": true,\n  \"problems\": [],\n  \"warnings\": [],\n  \"number\": \"CU2026-0001\",\n  \"recipient\": {\n    \"name\": \"Acme Studio SL\",\n    \"nif\": \"B12345674\",\n    \"email\": \"billing@acme.example\"\n  },\n  \"lines\": [\n    {\n      \"description\": \"Consulting\",\n      \"qty\": 3,\n      \"price\": 60,\n      \"vat\": 21\n    }\n  ],\n  \"breakdown\": [\n    {\n      \"rate\": 21,\n      \"base\": \"180.00\",\n      \"tax\": \"37.80\"\n    }\n  ],\n  \"vat\": \"37.80\",\n  \"total\": \"217.80\",\n  \"dueDays\": 15\n}"
+        }
+       ],
+       "structuredContent": {
+        "ok": true,
+        "problems": [],
+        "warnings": [],
+        "number": "CU2026-0001",
+        "recipient": {
+         "name": "Acme Studio SL",
+         "nif": "B12345674",
+         "email": "billing@acme.example"
+        },
+        "lines": [
+         {
+          "description": "Consulting",
+          "qty": 3,
+          "price": 60,
+          "vat": 21
+         }
+        ],
+        "breakdown": [
+         {
+          "rate": 21,
+          "base": "180.00",
+          "tax": "37.80"
+         }
+        ],
+        "vat": "37.80",
+        "total": "217.80",
+        "dueDays": 15
+       },
+       "isError": false
+      }
+     }
+    }
+   ]
+  },
+  {
+   "label": "The user approves the draft. Claude issues the VeriFactu record and collects with PayPal",
+   "lines": [
+    {
+     "dir": "out",
+     "msg": {
+      "jsonrpc": "2.0",
+      "id": 4,
+      "method": "tools/call",
+      "params": {
+       "name": "issue_invoice",
+       "arguments": {
+        "recipient": {
+         "name": "Acme Studio SL",
+         "nif": "B12345674",
+         "email": "billing@acme.example"
+        },
+        "lines": [
+         {
+          "description": "Consulting",
+          "qty": 3,
+          "price": 60,
+          "vat": 21
+         }
+        ],
+        "description": "Consulting hours",
+        "due_days": 15,
+        "collect_with_paypal": true
+       }
+      }
+     }
+    },
+    {
+     "dir": "in",
+     "msg": {
+      "jsonrpc": "2.0",
+      "id": 4,
+      "result": {
+       "content": [
+        {
+         "type": "text",
+         "text": "{\n  \"issued\": {\n    \"number\": \"CU2026-0001\",\n    \"date\": \"2026-10-06\",\n    \"client\": \"Acme Studio SL\",\n    \"nif\": \"B12345674\",\n    \"base\": \"180.00\",\n    \"vat\": \"37.80\",\n    \"total\": \"217.80\",\n    \"status\": \"SENT\",\n    \"due\": \"2026-10-21\",\n    \"paypal\": {\n      \"id\": \"INV2-MOCK-0001\",\n      \"status\": \"SENT\",\n      \"payerUrl\": \"https://www.sandbox.paypal.com/invoice/p/#INV2-MOCK-0001\"\n    },\n    \"hash\": \"CF168E62097DB1FF17521613B14EB2B5F56BDCFCCCE2DC99056D26920DFAD92C\",\n    \"verifyUrl\": \"https://prewww2.aeat.es/wlpl/TIKE-CONT/ValidarQR?nif=B76543214&numserie=CU2026-0001&fecha=06-10-2026&importe=217.80\"\n  },\n  \"paypalError\": null\n}"
+        }
+       ],
+       "structuredContent": {
+        "issued": {
+         "number": "CU2026-0001",
+         "date": "2026-10-06",
+         "client": "Acme Studio SL",
+         "nif": "B12345674",
+         "base": "180.00",
+         "vat": "37.80",
+         "total": "217.80",
+         "status": "SENT",
+         "due": "2026-10-21",
+         "paypal": {
+          "id": "INV2-MOCK-0001",
+          "status": "SENT",
+          "payerUrl": "https://www.sandbox.paypal.com/invoice/p/#INV2-MOCK-0001"
+         },
+         "hash": "CF168E62097DB1FF17521613B14EB2B5F56BDCFCCCE2DC99056D26920DFAD92C",
+         "verifyUrl": "https://prewww2.aeat.es/wlpl/TIKE-CONT/ValidarQR?nif=B76543214&numserie=CU2026-0001&fecha=06-10-2026&importe=217.80"
+        },
+        "paypalError": null
+       },
+       "isError": false
+      }
+     }
+    }
+   ]
+  },
+  {
+   "label": "Claude checks what is still to collect",
+   "lines": [
+    {
+     "dir": "out",
+     "msg": {
+      "jsonrpc": "2.0",
+      "id": 5,
+      "method": "tools/call",
+      "params": {
+       "name": "list_invoices",
+       "arguments": {
+        "status": "OPEN"
+       }
+      }
+     }
+    },
+    {
+     "dir": "in",
+     "msg": {
+      "jsonrpc": "2.0",
+      "id": 5,
+      "result": {
+       "content": [
+        {
+         "type": "text",
+         "text": "{\n  \"company\": {\n    \"name\": \"Estudio Norte SL\",\n    \"nif\": \"B76543214\",\n    \"series\": \"CU2026\"\n  },\n  \"summary\": {\n    \"quarter\": \"2026-Q4\",\n    \"invoices\": 1,\n    \"base\": \"180.00\",\n    \"vat\": \"37.80\",\n    \"unpaid\": 1,\n    \"unpaidTotal\": \"217.80\",\n    \"overdue\": 0,\n    \"overdueTotal\": \"0.00\",\n    \"collected\": \"0.00\"\n  },\n  \"invoices\": [\n    {\n      \"number\": \"CU2026-0001\",\n      \"date\": \"2026-10-06\",\n      \"client\": \"Acme Studio SL\",\n      \"nif\": \"B12345674\",\n      \"base\": \"180.00\",\n      \"vat\": \"37.80\",\n      \"total\": \"217.80\",\n      \"status\": \"SENT\",\n      \"due\": \"2026-10-21\",\n      \"paypal\": {\n        \"id\": \"INV2-MOCK-0001\",\n        \"status\": \"SENT\",\n        \"payerUrl\": \"https://www.sandbox.paypal.com/invoice/p/#INV2-MOCK-0001\"\n      },\n      \"hash\": \"CF168E62097DB1FF17521613B14EB2B5F56BDCFCCCE2DC99056D26920DFAD92C\",\n      \"verifyUrl\": \"https://prewww2.aeat.es/wlpl/TIKE-CONT/ValidarQR?nif=B76543214&numserie=CU2026-0001&fecha=06-10-2026&importe=217.80\"\n    }\n  ],\n  \"clients\": [\n    {\n      \"name\": \"Acme Studio SL\",\n      \"nif\": \"B12345674\",\n      \"email\": \"billing@acme.example\",\n      \"invoices\": 1\n    }\n  ]\n}"
+        }
+       ],
+       "structuredContent": {
+        "company": {
+         "name": "Estudio Norte SL",
+         "nif": "B76543214",
+         "series": "CU2026"
+        },
+        "summary": {
+         "quarter": "2026-Q4",
+         "invoices": 1,
+         "base": "180.00",
+         "vat": "37.80",
+         "unpaid": 1,
+         "unpaidTotal": "217.80",
+         "overdue": 0,
+         "overdueTotal": "0.00",
+         "collected": "0.00"
+        },
+        "invoices": [
+         {
+          "number": "CU2026-0001",
+          "date": "2026-10-06",
+          "client": "Acme Studio SL",
+          "nif": "B12345674",
+          "base": "180.00",
+          "vat": "37.80",
+          "total": "217.80",
+          "status": "SENT",
+          "due": "2026-10-21",
+          "paypal": {
+           "id": "INV2-MOCK-0001",
+           "status": "SENT",
+           "payerUrl": "https://www.sandbox.paypal.com/invoice/p/#INV2-MOCK-0001"
+          },
+          "hash": "CF168E62097DB1FF17521613B14EB2B5F56BDCFCCCE2DC99056D26920DFAD92C",
+          "verifyUrl": "https://prewww2.aeat.es/wlpl/TIKE-CONT/ValidarQR?nif=B76543214&numserie=CU2026-0001&fecha=06-10-2026&importe=217.80"
+         }
+        ],
+        "clients": [
+         {
+          "name": "Acme Studio SL",
+          "nif": "B12345674",
+          "email": "billing@acme.example",
+          "invoices": 1
+         }
+        ]
+       },
+       "isError": false
+      }
+     }
+    }
+   ]
+  },
+  {
+   "label": "And that the hash chain of the ledger still verifies",
+   "lines": [
+    {
+     "dir": "out",
+     "msg": {
+      "jsonrpc": "2.0",
+      "id": 6,
+      "method": "tools/call",
+      "params": {
+       "name": "verify_ledger",
+       "arguments": {}
+      }
+     }
+    },
+    {
+     "dir": "in",
+     "msg": {
+      "jsonrpc": "2.0",
+      "id": 6,
+      "result": {
+       "content": [
+        {
+         "type": "text",
+         "text": "{\n  \"ok\": true,\n  \"records\": 1,\n  \"lastHash\": \"CF168E62097DB1FF17521613B14EB2B5F56BDCFCCCE2DC99056D26920DFAD92C\",\n  \"file\": \"ledger.json\"\n}"
+        }
+       ],
+       "structuredContent": {
+        "ok": true,
+        "records": 1,
+        "lastHash": "CF168E62097DB1FF17521613B14EB2B5F56BDCFCCCE2DC99056D26920DFAD92C",
+        "file": "ledger.json"
+       },
+       "isError": false
+      }
+     }
+    }
+   ]
+  }
+ ]
+}

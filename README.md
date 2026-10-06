@@ -111,6 +111,44 @@ Every record lives in one append-only array, the hash chain. Two kinds of record
 
 The server tells the client to draft before issuing and never to compute VAT figures itself. If the ledger file is edited by hand, `verify_ledger` reports where, and every tool that writes refuses to run.
 
+### Agentic commerce, on the record
+
+`npm run mcp:demo` (`scripts/mcp-demo.js`, no dependencies, no network, no keys) starts the MCP server over stdio in mock mode (PayPal in memory, a throwaway ledger) and plays the session an agent needs to invoice and get paid: `initialize` → `tools/list` → `draft_invoice` → `issue_invoice` with `collect_with_paypal: true` → `list_invoices` → `verify_ledger`. It prints every JSON-RPC line and saves the conversation to `public/mcp-transcript.json`: protocol messages only, no absolute paths, no environment variables, mock PayPal ids (`npm test` checks the six methods and that nothing from the machine is in the file). The page replays it line by line in a terminal next to the Claude Desktop configuration (Replay button; with reduced motion it appears at once). The step where the agent issues and collects, as the page shows it (long values are cut with an ellipsis):
+
+```text
+# 4 · The user approves the draft. Claude issues the VeriFactu record and collects with PayPal
+→ {
+    "jsonrpc": "2.0", "id": 4, "method": "tools/call",
+    "params": {
+      "name": "issue_invoice",
+      "arguments": {
+        "recipient": { "name": "Acme Studio SL", "nif": "B12345674", "email": "billing@acme.example" },
+        "lines": [{ "description": "Consulting", "qty": 3, "price": 60, "vat": 21 }],
+        "due_days": 15,
+        "collect_with_paypal": true
+      }
+    }
+  }
+← {
+    "jsonrpc": "2.0", "id": 4,
+    "result": {
+      "structuredContent": {
+        "issued": {
+          "number": "CU2026-0001", "date": "2026-10-06", "client": "Acme Studio SL", "nif": "B12345674",
+          "base": "180.00", "vat": "37.80", "total": "217.80", "status": "SENT", "due": "2026-10-21",
+          "paypal": { "id": "INV2-MOCK-0001", "status": "SENT", "payerUrl": "https://www.sandbox.paypal.com/invoice/p/#INV2-MOCK-0…" },
+          "hash": "CF168E62097DB1FF17521613B14EB2B5F56BDCFCCCE2DC99056D2…",
+          "verifyUrl": "https://prewww2.aeat.es/wlpl/TIKE-CONT/ValidarQR?nif=…"
+        },
+        "paypalError": null
+      },
+      "isError": false
+    }
+  }
+```
+
+The agent never types a total: `draft_invoice` computes it, `issue_invoice` appends the hash-chained record and creates and sends the PayPal invoice, `verify_ledger` proves the chain still verifies. Your MCP client asks you to approve each call, and `cancel_invoice` is annotated as destructive.
+
 ## PayPal integration
 
 | PayPal API | Used for |
@@ -162,6 +200,7 @@ npm run build:css       # recompile public/styles.css after touching styles/ or 
 npm run shots           # screenshots at 1280 and 390 px plus visual and behaviour checks (MOCK=1, needs Playwright in ../ops/video)
 npm run social          # re-render public/og.png and public/icon-180.png from docs/og.html and favicon.svg
 npm run mcp             # the MCP server on stdio
+npm run mcp:demo        # play an agent session against it offline and save public/mcp-transcript.json
 ```
 
 No dependencies to install: Node 20 or later is enough.
@@ -173,11 +212,11 @@ api/        agent.js · paypal.js · health.js       serverless functions
 lib/        agent, LLM client, PayPal client, validation, request guard
 public/     index.html · verify.html · app.js · verify.js · vendor/ (QR, AG Grid, AG Charts, each with VERSION.md)
   js/       verifactu.js · ledger.js (engine) · chain.js · checks.js · plan.js · proposal.js · document.js · share.js
-            activity.js · tour.js · fmt.js · qr.js · status.js · grid.js (ledger grid) · widgets.js + insights.js (Ask the ledger) · say.js (the agent's sentence) · vendor.js (lazy loader + SRI)
+            activity.js · tour.js · fmt.js · qr.js · terminal.js (MCP replay) · status.js · grid.js (ledger grid) · widgets.js + insights.js (Ask the ledger) · say.js (the agent's sentence) · vendor.js (lazy loader + SRI)
 styles/     input.css (design tokens and components) → public/styles.css via Tailwind
 docs/       og.html (source of public/og.png)
 mcp/        server.js                                MCP server (stdio)
-scripts/    test.js · ui-test.js · mcp-test.js · shots.js · social-card.js · paypal-setup.js
+scripts/    test.js · ui-test.js · mcp-test.js · shots.js · social-card.js · paypal-setup.js · mcp-demo.js
 ```
 
 ## Status

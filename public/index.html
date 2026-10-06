@@ -183,12 +183,24 @@
   </section>
 
   <section id="agents" class="mx-auto max-w-7xl px-4 pb-10" aria-labelledby="agents-title">
-    <div class="panel grid gap-4 p-5 md:grid-cols-[1fr_1.2fr]">
-      <div>
+    <div class="panel p-5">
+      <div class="max-w-3xl">
         <h2 id="agents-title" class="text-lg font-semibold">Cuadra for AI agents</h2>
-        <p class="mt-1 text-xs leading-relaxed text-soft">The same engine ships as an MCP server. Claude, ChatGPT or any MCP client can draft, issue and collect VeriFactu invoices with PayPal, chase payments and draft the VAT return, while your MCP client asks you to approve every action. Same validation, same hash chain, your own PayPal account.</p>
+        <p class="mt-1 text-xs leading-relaxed text-soft">The same engine ships as an MCP server. Claude, ChatGPT or any MCP client can draft, issue and collect VeriFactu invoices with PayPal, chase payments and draft the VAT return, while your MCP client asks you to approve every action. Same validation, same hash chain, your own PayPal account. Below, a real session: an agent drafts an invoice, issues it, collects it with PayPal and checks the chain.</p>
       </div>
-      <pre class="num min-w-0 overflow-x-auto rounded-xl bg-ink p-3 text-[11px] leading-relaxed text-fg/80"><code>{
+      <div class="agents-grid">
+        <figure class="term">
+          <figcaption class="term-bar">
+            <span class="term-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+            <span class="term-title">claude → cuadra · MCP over stdio</span>
+            <button id="termReplay" type="button" class="btn-ghost term-replay">Replay</button>
+          </figcaption>
+          <div id="termBody" class="term-body" role="region" aria-label="Recorded MCP session, one JSON-RPC message after the other" aria-live="off" tabindex="0"></div>
+          <p class="term-foot">A real run of <code>mcp/server.js</code>, recorded by <code>scripts/mcp-demo.js</code>. PayPal is the in-memory stand-in (hence the MOCK ids), so no network and no credentials. Messages are abbreviated for reading and the text copy of each result is left out: <a class="link" href="/mcp-transcript.json">the full JSON</a>.</p>
+        </figure>
+        <div class="min-w-0">
+          <div class="label">Claude Desktop configuration</div>
+          <pre class="num mt-2 min-w-0 overflow-x-auto rounded-xl bg-ink p-3 text-[11px] leading-relaxed text-fg/80"><code>{
   "mcpServers": {
     "cuadra": {
       "command": "node",
@@ -198,6 +210,11 @@
     }
   }
 }</code></pre>
+          <div class="label mt-4">11 tools</div>
+          <p class="num mt-2 text-[11px] leading-relaxed text-soft">draft_invoice · issue_invoice · list_invoices · sync_paypal · collect_with_paypal · send_reminder · record_payment · cancel_invoice · vat_return · verify_ledger · export_verifactu_xml</p>
+          <p class="mt-3 text-xs leading-relaxed text-soft">Read-only tools are annotated as such and <code class="num">cancel_invoice</code> as destructive, so your client asks before it runs. If the ledger file is edited by hand, <code class="num">verify_ledger</code> says where and every tool that writes refuses to run.</p>
+        </div>
+      </div>
     </div>
   </section>
 

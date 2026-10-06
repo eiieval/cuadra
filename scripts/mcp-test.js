@@ -1,5 +1,5 @@
 // Offline end-to-end test of the MCP server: spawns it over stdio with PayPal mocked and a temporary ledger.
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -94,6 +94,41 @@ try {
   const nomethod = await rpc('resources/list', {});
   expect('unknown methods return -32601', nomethod.error?.code === -32601);
   expect('stdout carries only JSON-RPC messages', stray.length === 0);
+
+  // The recorded session (B4): public/mcp-transcript.json is a real run of this server, replayed on the page, and it is safe to
+  // publish. scripts/mcp-demo.js makes it offline; running it again must give the same conversation.
+  {
+    const flatten = (t) => t.steps.flatMap((s) => s.lines);
+    const methodsOf = (t) => flatten(t).filter((l) => l.dir === 'out' && l.msg.id != null).map((l) => (l.msg.method === 'tools/call' ? l.msg.params.name : l.msg.method));
+    const WANTED = 'initialize,tools/list,draft_invoice,issue_invoice,list_invoices,verify_ledger';
+    const checkTranscript = (label, text) => {
+      const t = JSON.parse(text);
+      const lines = flatten(t);
+      const requests = lines.filter((l) => l.dir === 'out' && l.msg.id != null);
+      const answered = requests.every((r) => lines.filter((l) => l.dir === 'in' && l.msg.id === r.msg.id).length === 1);
+      const byName = (name) => lines.find((l) => l.dir === 'in' && l.msg.id === requests.find((r) => r.msg.params?.name === name)?.msg.id)?.msg.result;
+      const issue = lines.find((l) => l.dir === 'out' && l.msg.params?.name === 'issue_invoice')?.msg;
+      const issued = byName('issue_invoice')?.structuredContent?.issued;
+      expect(`${label}: the six methods of the session, in order (${WANTED.replaceAll(',', ' → ')})`, methodsOf(t).join() === WANTED && t.steps.length === 6 && t.steps.every((s) => typeof s.label === 'string' && s.label.length > 10));
+      expect(`${label}: every request is answered once, none with an error, and the initialized notification has no id and no answer`, answered && lines.filter((l) => l.dir === 'in').every((l) => !l.msg.error && l.msg.jsonrpc === '2.0') && lines.filter((l) => l.msg.method === 'notifications/initialized').length === 1 && lines.find((l) => l.msg.method === 'notifications/initialized').msg.id === undefined && lines.length === 13);
+      expect(`${label}: the invoice is issued with collect_with_paypal and comes back sent, with a mock PayPal id, a sandbox payer link, the AEAT verification URL and a SHA-256 hash`, issue?.params.arguments.collect_with_paypal === true && issued?.status === 'SENT' && issued.total === '217.80' && /^INV2-MOCK-\d{4}$/.test(issued.paypal?.id) && /^https:\/\/www\.sandbox\.paypal\.com\//.test(issued.paypal?.payerUrl) && /^https:\/\/prewww2\.aeat\.es\//.test(issued.verifyUrl) && /^[0-9A-F]{64}$/.test(issued.hash));
+      expect(`${label}: the draft comes before the issue and issues nothing, the list shows the open invoice, the chain verifies (1 record, ledger path relative)`, byName('draft_invoice')?.structuredContent?.ok === true && byName('draft_invoice').structuredContent.total === '217.80' && byName('list_invoices')?.structuredContent?.invoices?.length === 1 && byName('list_invoices').structuredContent.invoices[0].status === 'SENT' && byName('verify_ledger')?.structuredContent?.ok === true && byName('verify_ledger').structuredContent.records === 1 && byName('verify_ledger').structuredContent.file === 'ledger.json' && byName('verify_ledger').structuredContent.lastHash === issued.hash);
+      const toolsReply = lines.find((l) => l.dir === 'in' && l.msg.id === requests.find((r) => r.msg.method === 'tools/list').msg.id).msg.result;
+      expect(`${label}: tools/list carries the 11 tools with their input schemas and annotations`, toolsReply.tools.length === 11 && toolsReply.tools.every((tool) => tool.inputSchema?.type === 'object' && tool.annotations) && toolsReply.tools.some((tool) => tool.name === 'cancel_invoice' && tool.annotations.destructiveHint === true));
+      const secrets = [/AIza[0-9A-Za-z_-]{35}/, /github_pat_[0-9A-Za-z_]{20,}/, /\bgh[pousr]_[0-9A-Za-z]{30,}/, /\bvc[pk]_[0-9A-Za-z]{20,}/, /-----BEGIN [A-Z ]*PRIVATE KEY-----/, /Bearer\s+[0-9A-Za-z._-]{24,}/, /\bsk-[0-9A-Za-z]{20,}/, /PAYPAL_CLIENT|GEMINI_API|LLM_API|CUADRA_LEDGER/, /"(?:token|secret|password|authorization|api[_-]?key)"/i];
+      const paths = [/(?<![A-Za-z0-9])[A-Za-z]:[\\/](?![\\/])/, /\/Users\//, /\/home\//, /\/tmp\//i, /\\Users\\/i, /AppData/i, /\\Temp\\/i, /cuadra-mcp/i, /\.env\b/];
+      expect(`${label}: no secret, token, environment variable name or absolute path anywhere in the file`, !secrets.some((re) => re.test(text)) && !paths.some((re) => re.test(text)) && !('env' in t.server) && Object.keys(t.server).join() === 'command,name,version,protocol');
+      return t;
+    };
+    const committed = readFileSync(new URL('../public/mcp-transcript.json', import.meta.url), 'utf8');
+    checkTranscript('transcript (committed)', committed);
+
+    const out = join(dir, 'transcript-check.json');
+    const run = spawnSync(process.execPath, [fileURLToPath(new URL('./mcp-demo.js', import.meta.url)), out], { env: { PATH: process.env.PATH }, encoding: 'utf8', timeout: 30000 });
+    expect('mcp-demo.js runs offline (no network, no keys), prints every JSON-RPC line with an arrow and ends with exit code 0', run.status === 0 && (run.stdout.match(/^→ /gm) || []).length === 7 && (run.stdout.match(/^← /gm) || []).length === 6 && /JSON-RPC lines recorded/.test(run.stdout) && !/[A-Za-z]:\\/.test(run.stdout));
+    const fresh = checkTranscript('transcript (fresh run)', readFileSync(out, 'utf8'));
+    expect('a fresh run records the same conversation as the committed one (same steps, requests and tool names)', JSON.stringify(fresh.steps.map((s) => [s.label, s.lines.map((l) => l.msg.method || l.msg.params?.name || l.dir)])) === JSON.stringify(JSON.parse(committed).steps.map((s) => [s.label, s.lines.map((l) => l.msg.method || l.msg.params?.name || l.dir)])) && fresh.server.version === JSON.parse(committed).server.version);
+  }
 } catch (e) {
   console.log('FAIL', e.message);
   failed++;

@@ -15,6 +15,7 @@ import { chartOptions, createChartHub, insightCardHtml, boardCardHtml, widgetBod
 import { eur, md } from '../public/js/fmt.js';
 import { synthReply, detectLang } from '../public/js/say.js';
 import { normalizeProposal } from '../public/js/proposal.js';
+import { prettyJson, displayMsg, jsonHtml, transcriptLines, playTranscript } from '../public/js/terminal.js';
 import { ledgerRows, CHIPS, matchesChip, chipCounts, gridTotals, registerCsv, registerCells, REGISTER_HEADER, numberCellHtml, clientCellHtml, statusCellHtml, actionsCellHtml, csvCell, dueText } from '../public/js/grid.js';
 
 let failed = 0;
@@ -198,7 +199,7 @@ expect('the CSP gained no origin: fonts and styles still come only from Google F
   const sheet = read('public/styles.css');
   const files = ['public/index.html', 'public/verify.html', 'public/app.js', 'public/verify.js', ...readdirSync(new URL('../public/js', import.meta.url)).map((f) => `public/js/${f}`)];
   const hooks = new Set(['tour-next', 'tour-skip', 'false', 'true']); // JS hooks without styles
-  const dynamic = /^(plan|activity|check)-$|^check-(ok|warn|bad)$/; // plan-${state}, activity-${actor}, check-${level}
+  const dynamic = /^(plan|activity|check|term|t-arrow)-$|^check-(ok|warn|bad)$/; // plan-${state}, activity-${actor}, check-${level}, term-${kind}, t-arrow-${dir}
   const classes = new Set();
   for (const f of files) {
     for (const m of read(f).matchAll(/class(?:Name)?="([^"]*)"/g)) for (const t of m[1].replace(/\$\{[^}]*\}/g, ' ').split(/\s+/)) if (/^[a-z][a-z0-9-]*$/.test(t)) classes.add(t);
@@ -348,6 +349,40 @@ expect('the CSP gained no origin: fonts and styles still come only from Google F
   const wild = normalizeProposal({ recipient: { name: 'x'.repeat(300), nif: ' b-1234 5674 ', email: 'a@b.example' }, lines: [{ description: '', qty: -3, price: 'abc', vat: 7 }], due_days: 400 });
   expect('proposals are normalized before anything is shown or said: bounded text, a clean NIF, quantities and prices above zero, a Spanish VAT rate, due days 0 to 90', wild.recipient.name.length === 120 && wild.recipient.nif === 'B12345674' && wild.lines[0].description === 'Service' && wild.lines[0].qty === 0.01 && wild.lines[0].price === 0.01 && wild.lines[0].vat === 21 && wild.dueDays === 90 && normalizeProposal({}).lines.length === 1 && normalizeProposal({}).dueDays === 15);
   expect('say: the language follows the person ("Factura a Lumen…", "¿Quién me debe dinero?" and "Cierra el trimestre" are Spanish, the rest English)', ['Factura a Lumen Foods SL por 2 diseños de etiqueta a 250 € más IVA', '¿Quién me debe dinero?', 'Cierra el trimestre', 'Ingresos por cliente este trimestre'].every((t) => detectLang(t) === 'es') && ['Invoice Acme Studio SL for 3 hours', 'Close my quarter', 'Revenue by client this quarter', 'Who owes me money?', '', undefined].every((t) => detectLang(t) === 'en'));
+}
+
+// 11. The terminal of "Cuadra for AI agents" (B4): the recorded MCP session, written for reading and replayed line by line.
+{
+  const transcript = JSON.parse(read('public/mcp-transcript.json'));
+  const lines = transcriptLines(transcript);
+  const stripSpans = (html) => html.replace(/<span class="[a-z -]+">/g, '').replace(/<\/span>/g, '');
+  expect('terminal: long strings and lists are cut with an ellipsis, small objects stay on one line, deep ones fold', prettyJson({ s: 'x'.repeat(80), list: [1, 2, 3, 4, 5], small: { a: 1, b: 'two' }, deep: { a: { b: { c: { d: { e: { f: 1 } } } } } } }, { depth: 3, str: 20 }).includes(`"s": "${'x'.repeat(19)}…"`) && prettyJson({ list: [1, 2, 3, 4, 5] }) === '{ "list": [1, 2, …+3 more] }' && prettyJson({ a: 1, b: 'two' }) === '{ "a": 1, "b": "two" }' && prettyJson({ a: { b: { c: 1 } } }, { depth: 2 }) === '{ "a": { "b": {…} } }' && prettyJson(null) === 'null' && prettyJson([]) === '[]');
+  expect('terminal: a tool list shows the tool names, a tool result drops the text copy of its own structuredContent, nothing is mutated', (() => {
+    const list = { jsonrpc: '2.0', id: 2, result: { tools: [{ name: 'draft_invoice', inputSchema: { type: 'object' } }, { name: 'issue_invoice', inputSchema: {} }] } };
+    const call = { jsonrpc: '2.0', id: 3, result: { content: [{ type: 'text', text: '{"ok":true}' }], structuredContent: { ok: true }, isError: false } };
+    const before = JSON.stringify([list, call]);
+    const shown = [displayMsg(list), displayMsg(call), displayMsg({ jsonrpc: '2.0', id: 9, error: { code: -32601, message: 'x' } })];
+    return JSON.stringify(shown[0].result.tools) === '["draft_invoice","issue_invoice"]' && !('content' in shown[1].result) && shown[1].result.structuredContent.ok === true && shown[2].error.code === -32601 && JSON.stringify([list, call]) === before;
+  })());
+  expect('terminal: JSON is coloured by token (keys, strings, numbers, literals) and every character is escaped', jsonHtml('"a": "b", "n": 1.5, "t": true, "z": null').includes('<span class="t-key">&quot;a&quot;</span>:') && jsonHtml('"s": "x"').includes('<span class="t-str">&quot;x&quot;</span>') && jsonHtml('"n": -3').includes('<span class="t-num">-3</span>') && jsonHtml('"t": false').includes('<span class="t-lit">false</span>') && !jsonHtml(`"k": "${hostile}"`).includes('<img') && jsonHtml(`"k": "${hostile}"`).includes('&lt;img'));
+  expect('terminal: the transcript becomes a command, six numbered notes, seven messages out, six in and a closing line', lines[0].kind === 'cmd' && lines[0].text === '$ node mcp/server.js' && lines.filter((l) => l.kind === 'note').map((l) => l.text.slice(0, 4)).join() === '# 1 ,# 2 ,# 3 ,# 4 ,# 5 ,# 6 ' && lines.filter((l) => l.kind === 'out').length === 7 && lines.filter((l) => l.kind === 'in').length === 6 && lines.at(-1).kind === 'end' && /13 JSON-RPC messages, 6 steps/.test(lines.at(-1).text));
+  expect('terminal: the lines tell the story with the server\'s own values (draft 217.80, issued and sent with a mock PayPal id, chain ok) and nothing is escaped JSON-in-JSON', (() => { const text = lines.map((l) => l.text).join('\n'); return text.includes('"name": "draft_invoice"') && text.includes('"total": "217.80"') && text.includes('"collect_with_paypal": true') && /"id": "INV2-MOCK-0001"/.test(text) && text.includes('"status": "SENT"') && /"ok": true/.test(text) && !text.includes('\\n') && !text.includes('\\"') && lines.length < 260; })());
+  expect('terminal: every line is safe HTML (only our spans), and no line is absurdly long', lines.every((l) => !stripSpans(l.html).includes('<') && l.text.length <= 140));
+  expect('terminal: every line knows its indentation, so a line that wraps on a phone continues under it (hanging indent)', lines[0].ind === 0 && lines.filter((l) => l.kind === 'note').every((l) => l.ind === 0) && lines.filter((l) => l.kind === 'out' || l.kind === 'in').every((l) => l.ind === 2) && lines.find((l) => l.text === '    "jsonrpc": "2.0",').ind === 4 && lines.find((l) => /^ {10}"name": "Acme Studio SL",$/.test(l.text)).ind === 10);
+  const box = { html: '', scrollTop: 0, replaceChildren() { this.html = ''; }, insertAdjacentHTML(where, html) { this.html += html; } };
+  const instant = playTranscript(box, lines, { reduced: true });
+  await instant.done;
+  expect('terminal replay: with reduced motion the whole session is there at once (no timers)', (box.innerHTML || '').split('class="term-line').length - 1 === lines.length);
+  const slow = { html: '', scrollTop: 0, replaceChildren() { this.html = ''; }, insertAdjacentHTML(where, html) { this.html += html; } };
+  const run = playTranscript(slow, lines, { pauses: { note: 1, msg: 1, line: 1 } });
+  await run.done;
+  const stopped = { html: '', scrollTop: 0, replaceChildren() { this.html = ''; }, insertAdjacentHTML(where, html) { this.html += html; } };
+  const early = playTranscript(stopped, lines, { pauses: { note: 4, msg: 4, line: 4 } });
+  await new Promise((r) => setTimeout(r, 30));
+  early.stop();
+  await early.done;
+  const kept = stopped.html.split('class="term-line').length - 1;
+  expect('terminal replay: lines arrive in order, one after the other, and Replay can stop a run half way', slow.html.split('class="term-line').length - 1 === lines.length && slow.html.indexOf('t-prompt') < slow.html.indexOf('term-note') && kept > 0 && kept < lines.length && (await (async () => { const before = stopped.html.length; await new Promise((r) => setTimeout(r, 40)); return stopped.html.length === before; })()));
 }
 
 console.log(failed ? `${failed} UI check(s) failed` : 'all UI checks passed');

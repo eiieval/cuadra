@@ -18,6 +18,7 @@ import { startTour, tourSeen } from './js/tour.js';
 import { BADGE, OPEN, statusWord } from './js/status.js';
 import { CHIPS, chipCounts, createLedgerGrid, ledgerRows, registerCsv } from './js/grid.js';
 import { loadVendor } from './js/vendor.js';
+import { playTranscript, transcriptLines } from './js/terminal.js';
 import { MAX_WIDGETS, cleanSpec, defaultBoard, specKey, widgetCsv, widgetData } from './js/widgets.js';
 import { boardCardHtml, createChartHub, insightCardHtml, readTokens } from './js/insights.js';
 
@@ -1215,6 +1216,40 @@ if (Speech) {
     mic.setAttribute('aria-pressed', 'true');
     rec.start();
   };
+}
+
+// "Cuadra for AI agents": the MCP session recorded by scripts/mcp-demo.js, replayed line by line in a terminal the first time the
+// section scrolls into view and again with the Replay button. With reduced motion the whole session is there at once.
+let termLines = null;
+let termRun = null;
+async function playTerm() {
+  const box = $('#termBody');
+  termRun?.stop();
+  if (!termLines) {
+    try {
+      const r = await fetch('/mcp-transcript.json');
+      if (!r.ok) throw new Error('missing');
+      termLines = transcriptLines(await r.json());
+    } catch {
+      box.textContent = 'The recorded session is not available here. It is shown in the README, under Agentic commerce.';
+      return;
+    }
+  }
+  box.classList.add('is-playing');
+  termRun = playTranscript(box, termLines, { reduced: reducedMotion() });
+  const run = termRun;
+  run.done.then(() => { if (termRun === run) box.classList.remove('is-playing'); });
+}
+$('#termReplay').onclick = playTerm;
+if ('IntersectionObserver' in window) {
+  const seen = new IntersectionObserver((entries) => {
+    if (!entries.some((e) => e.isIntersecting)) return;
+    seen.disconnect();
+    playTerm();
+  }, { threshold: 0.3 });
+  seen.observe($('#agents'));
+} else {
+  playTerm();
 }
 
 // The tour starts by itself on the first visit to the plain page, and always with ?tour=1 (never in the local self-test).
