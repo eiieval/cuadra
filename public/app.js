@@ -6,6 +6,9 @@ import {
 
 import { esc, eur, fmtDate, isoToday, md, safeUrl } from './js/fmt.js';
 import { chainBlocks, chainStatus, chainTrackHtml, statusHtml } from './js/chain.js';
+import { engineChecks, checksHtml } from './js/checks.js';
+import { proposalPaperHtml } from './js/proposal.js';
+import { isPlan, planProgress, planSummary, pendingLowRisk, hasHighRisk } from './js/plan.js';
 
 const $ = (s) => document.querySelector(s);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -16,9 +19,10 @@ const METHOD = { BANK_TRANSFER: 'bank transfer', CASH: 'cash', OTHER: 'other met
 const OPEN = (s) => s !== 'PAID' && s !== 'CANCELLED';
 const EXAMPLES = [
   'Invoice Acme Studio SL (B12345674) for 3 hours of consulting at €60',
-  'Factura a Lumen Foods SL por 2 diseños de etiqueta a 250 € más IVA',
+  'Close my quarter',
   'Chase every overdue invoice',
   'Prepare my VAT return',
+  'Factura a Lumen Foods SL por 2 diseños de etiqueta a 250 € más IVA',
   'Hotel Mirador paid by bank transfer',
   'Who owes me money?',
 ];
@@ -38,6 +42,8 @@ let statusTimer;
 let state = (() => { try { return JSON.parse(localStorage.getItem(KEY)); } catch { return null; } })();
 const firstVisit = !state;
 state = state || fresh();
+state.chat = (state.chat || []).filter((m) => m.text !== 'Thinking…');
+for (const m of state.chat) { delete m.running; for (const a of m.actions || []) delete a.busy; }
 const save = () => { if (tampered) return; try { localStorage.setItem(KEY, JSON.stringify(state)); } catch { /* storage unavailable */ } };
 
 async function post(url, body) {
@@ -121,6 +127,8 @@ async function collect(rec) {
   return r.error;
 }
 
+// Every handler reports { ok, text }: the text goes on the card (and into what the model remembers),
+// ok feeds the plan summary.
 async function issue(inv, withPaypal) {
   const number = nextNumber(state.records, state.company.series);
   const rec = await buildAlta({
@@ -133,16 +141,16 @@ async function issue(inv, withPaypal) {
   chainFx = { newFrom: state.records.length - 1 };
   save();
   await renderAll();
-  if (!withPaypal) return `Issued ${number}. VeriFactu record chained.`;
+  if (!withPaypal) return { ok: true, number, text: `Issued ${number}. VeriFactu record chained.` };
   const error = await collect(rec);
-  return error ? `Issued ${number}, but PayPal failed: ${error}` : `Issued ${number} and sent with PayPal.`;
+  return error ? { ok: false, number, text: `Issued ${number}, but PayPal failed: ${error}` } : { ok: true, number, text: `Issued ${number} and sent with PayPal.` };
 }
 
 async function sendWithPaypal(rec) {
-  if (rec.paypal?.id) return `${rec.number} is already on PayPal.`;
-  if (!OPEN(status(rec))) return `${rec.number} is ${status(rec).toLowerCase()}, nothing to collect.`;
+  if (rec.paypal?.id) return { ok: false, text: `${rec.number} is already on PayPal.` };
+  if (!OPEN(status(rec))) return { ok: false, text: `${rec.number} is ${status(rec).toLowerCase()}, nothing to collect.` };
   const error = await collect(rec);
-  return error ? `PayPal failed for ${rec.number}: ${error}` : `${rec.number} sent with PayPal. The client can pay online now.`;
+  return error ? { ok: false, text: `PayPal failed for ${rec.number}: ${error}` } : { ok: true, text: `${rec.number} sent with PayPal. The client can pay online now.` };
 }
 
 // Pull PayPal statuses for open invoices: on load and when the tab regains focus, at most every 30 seconds.
@@ -164,41 +172,92 @@ async function syncPaypal() {
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') syncPaypal(); });
 
 async function remind(rec) {
-  if (!rec.paypal?.id) return `${rec.number} is not on PayPal yet. Send it with PayPal first.`;
+  if (!rec.paypal?.id) return { ok: false, text: `${rec.number} is not on PayPal yet. Send it with PayPal first.` };
   const r = await post('/api/paypal', { op: 'remind', id: rec.paypal.id, token: rec.paypal.token });
-  if (r.error) return `Reminder failed: ${r.error}`;
+  if (r.error) return { ok: false, text: `Reminder failed: ${r.error}` };
   Object.assign(rec.paypal, { status: r.status, payerUrl: safeUrl(r.payerUrl) || rec.paypal.payerUrl });
-  return `Reminder sent for ${rec.number}.`;
+  return { ok: true, text: `Reminder sent for ${rec.number}.` };
 }
 
 async function markPaid(rec, method = 'BANK_TRANSFER') {
-  if (!OPEN(status(rec))) return `${rec.number} is already ${status(rec).toLowerCase()}.`;
+  if (!OPEN(status(rec))) return { ok: false, text: `${rec.number} is already ${status(rec).toLowerCase()}.` };
   if (rec.paypal?.id) {
     const r = await post('/api/paypal', { op: 'record_payment', id: rec.paypal.id, token: rec.paypal.token, amount: Number(rec.total), date: today(), method });
-    if (r.error) return `PayPal could not record the payment: ${r.error}`;
+    if (r.error) return { ok: false, text: `PayPal could not record the payment: ${r.error}` };
     rec.paypal.status = r.status;
   }
   Object.assign(rec, { paidAt: today(), paidMethod: method });
-  return `${rec.number} marked as paid by ${METHOD[method] || 'other method'}${rec.paypal?.id ? ', also in PayPal' : ''}.`;
+  return { ok: true, text: `${rec.number} marked as paid by ${METHOD[method] || 'other method'}${rec.paypal?.id ? ', also in PayPal' : ''}.` };
 }
 
 // Cancellation never edits the invoice: PayPal stops collecting it, then a RegistroAnulacion is appended to the chain.
 async function annul(rec, reason) {
-  if (cancelled().has(rec.number)) return `${rec.number} is already cancelled.`;
-  if (status(rec) === 'PAID') return `${rec.number} is paid. A paid invoice needs a corrective invoice (factura rectificativa), not a cancellation.`;
+  if (cancelled().has(rec.number)) return { ok: false, text: `${rec.number} is already cancelled.` };
+  if (status(rec) === 'PAID') return { ok: false, text: `${rec.number} is paid. A paid invoice needs a corrective invoice (factura rectificativa), not a cancellation.` };
   if (rec.paypal?.id && rec.paypal.status !== 'CANCELLED') {
     const r = await post('/api/paypal', { op: 'cancel', id: rec.paypal.id, token: rec.paypal.token, reason });
-    if (r.error) return `PayPal could not cancel ${rec.number}: ${r.error}. Nothing was changed.`;
+    if (r.error) return { ok: false, text: `PayPal could not cancel ${rec.number}: ${r.error}. Nothing was changed.` };
     rec.paypal.status = r.status;
   }
   state.records.push(await buildAnulacion({ issuer: state.company, target: rec, prev: state.records.at(-1), reason }));
   chainFx = { newFrom: state.records.length - 1 };
-  return `${rec.number} cancelled with a chained VeriFactu cancellation record${rec.paypal?.id ? '; the PayPal invoice is cancelled too' : ''}.`;
+  return { ok: true, text: `${rec.number} cancelled with a chained VeriFactu cancellation record${rec.paypal?.id ? '; the PayPal invoice is cancelled too' : ''}.` };
 }
 
-/// ---------- rendering ----------
+// Runs one proposal of the agent after the user approved it (act = the button's data-act) and stores the outcome on it.
+async function perform(a, act) {
+  const rec = findInvoice(state.records, a.args?.number);
+  let r;
+  if (act === 'discard') r = { ok: true, text: 'Dismissed.', skipped: true };
+  else if (act === 'issue' || act === 'issue-send') r = await issue(normalize(a.args), act === 'issue-send');
+  else if (act === 'open-vat') r = { ok: true, text: 'Opened the VAT draft.' };
+  else if (!rec) r = { ok: false, text: 'Invoice not found.' };
+  else if (act === 'remind') r = await remind(rec);
+  else if (act === 'collect') r = await sendWithPaypal(rec);
+  else if (act === 'mark-paid') r = await markPaid(rec, METHOD[a.args?.method] ? a.args.method : 'BANK_TRANSFER');
+  else if (act === 'cancel') r = await annul(rec, String(a.args?.reason || '').slice(0, 200));
+  else return;
+  Object.assign(a, { done: r.text, ok: r.ok, ...(r.skipped ? { skipped: true } : {}), ...(r.number ? { number: r.number } : {}) });
+}
 
-const buttons = (id, primary, label, secondary = 'Dismiss') => `<div class="mt-3 flex flex-wrap gap-2"><button class="btn-primary" data-act="${primary}" data-id="${id}">${esc(label)}</button><button class="btn-ghost" data-act="discard" data-id="${id}">${esc(secondary)}</button></div>`;
+async function run(mi, ai, act) {
+  const a = state.chat[mi]?.actions?.[ai];
+  if (!a || a.done || a.busy) return;
+  a.busy = true;
+  renderChat();
+  try {
+    await perform(a, act);
+  } finally {
+    delete a.busy;
+    save();
+    await renderAll();
+  }
+}
+
+// "Approve all reminders and collections": the low-risk steps of a plan, one after the other.
+const ACT_OF = { propose_reminder: 'remind', propose_collect: 'collect' };
+async function approveAll(mi) {
+  const m = state.chat[mi];
+  if (!m || m.running) return;
+  const todo = pendingLowRisk(stepViews(m.actions));
+  if (!todo.length) return;
+  m.running = true;
+  renderChat();
+  try {
+    for (const { ai } of todo) {
+      await run(mi, ai, ACT_OF[m.actions[ai].type]);
+      await sleep(220);
+    }
+  } finally {
+    delete m.running;
+    save();
+    renderChat();
+  }
+}
+
+// ---------- rendering ----------
+
+const buttons = (id, primary, label, secondary = 'Dismiss', busy = false) => `<div class="mt-3 flex flex-wrap gap-2"><button class="btn-primary" data-act="${primary}" data-id="${id}"${busy ? ' disabled' : ''}>${busy ? 'Working…' : esc(label)}</button><button class="btn-ghost" data-act="discard" data-id="${id}"${busy ? ' disabled' : ''}>${esc(secondary)}</button></div>`;
 const invoiceLine = (rec) => `<b class="num">${esc(rec.number)}</b> · ${esc(rec.recipient?.name)} · <span class="num">${eur(rec.total)}</span> <span class="${BADGE[status(rec)] || 'badge'}">${esc(status(rec).replace(/_/g, ' '))}</span>`;
 
 function vatTable(v, compact = false) {
@@ -212,55 +271,116 @@ function vatTable(v, compact = false) {
     ${compact ? '' : `<div class="mt-2 text-[11px] leading-relaxed text-soft">${v.invoices} invoice${v.invoices === 1 ? '' : 's'}${v.cancelled ? `, ${v.cancelled} cancelled and excluded` : ''}${Number(v.exempt) ? ` · exempt (0%) base ${eur(v.exempt)}, declared outside boxes 01–09` : ''}. Output VAT only: add deductible VAT from your expenses (boxes 28–45) before filing. Draft for your adviser, not a filing.</div>`}`;
 }
 
-function actionCard(a, mi, ai) {
+// A step the ledger no longer allows (invoice gone, already settled...): there is nothing left to approve.
+function isDeadEnd(a) {
+  if (a.type === 'propose_invoice' || a.type === 'show_vat_return') return false;
+  const rec = findInvoice(state.records, a.args?.number);
+  if (!rec) return true;
+  const st = status(rec);
+  if (a.type === 'propose_reminder') return !(rec.paypal?.id && OPEN(st));
+  if (a.type === 'propose_collect') return rec.paypal?.id || !OPEN(st);
+  if (a.type === 'propose_mark_paid') return !OPEN(st);
+  if (a.type === 'propose_cancel') return st === 'PAID' || (st === 'CANCELLED' && cancelled().has(rec.number));
+  return false;
+}
+const stepViews = (actions) => actions.map((a) => ({ ...a, dead: !a.done && Boolean(isDeadEnd(a)) }));
+
+function actionCard(a, mi, ai, inPlan = false) {
   const id = `${mi}-${ai}`;
-  const done = a.done ? `<div class="card-done">${esc(a.done)}</div>` : '';
+  const done = a.done ? `<div class="${a.skipped ? 'card-note' : a.ok === false ? 'card-fail' : 'card-done'}">${esc(a.done)}</div>` : '';
+  const card = (extra = '') => `card${inPlan ? ' card-step' : ''}${extra}`;
   if (a.type === 'show_vat_return') {
     const q = /^\d{4}-Q[1-4]$/.test(a.args?.quarter || '') ? a.args.quarter : returnQuarter(today());
-    return `<div class="card"><div class="flex items-center gap-2"><div class="text-xs text-soft">Modelo 303 draft · ${esc(q)}</div><button class="btn-ghost ml-auto !min-h-8" data-act="open-vat" data-id="${id}" data-q="${esc(q)}">Open</button></div><div class="mt-1">${vatTable(vatReturn(state.records, q), true)}</div></div>`;
+    return `<div class="${card()}"><div class="flex items-center gap-2"><div class="text-xs text-soft">Modelo 303 draft · ${esc(q)}</div><button class="btn-ghost ml-auto !min-h-8" data-act="open-vat" data-id="${id}" data-q="${esc(q)}">Open</button></div><div class="mt-1">${vatTable(vatReturn(state.records, q), true)}</div>${done}</div>`;
   }
   if (a.type !== 'propose_invoice') {
     const rec = findInvoice(state.records, a.args?.number);
-    if (!rec) return `<div class="card text-xs text-warn">Invoice ${esc(a.args?.number || '?')} is not in the ledger.</div>`;
+    if (!rec) return `<div class="${card()} text-xs text-warn">Invoice ${esc(a.args?.number || '?')} is not in the ledger.</div>`;
     const st = status(rec);
     const head = (label) => `<div class="text-xs text-soft">${label}</div><div class="mt-1 text-sm">${invoiceLine(rec)}</div>`;
-    if (a.type === 'propose_reminder') return `<div class="card">${head('Payment reminder')}${done || (rec.paypal?.id && OPEN(st) ? buttons(id, 'remind', 'Send PayPal reminder') : '<div class="card-note">No PayPal invoice to remind.</div>')}</div>`;
-    if (a.type === 'propose_collect') return `<div class="card">${head('Collect with PayPal')}<div class="card-note !mt-1">Creates a PayPal invoice with the VeriFactu verification link, so ${esc(rec.recipient?.name)} can pay online.</div>${done || (!rec.paypal?.id && OPEN(st) ? buttons(id, 'collect', 'Send with PayPal') : '<div class="card-note">Already on PayPal or settled.</div>')}</div>`;
+    if (a.type === 'propose_reminder') return `<div class="${card()}">${head('Payment reminder')}${done || (rec.paypal?.id && OPEN(st) ? buttons(id, 'remind', 'Send PayPal reminder', 'Dismiss', a.busy) : '<div class="card-note">No PayPal invoice to remind.</div>')}</div>`;
+    if (a.type === 'propose_collect') return `<div class="${card()}">${head('Collect with PayPal')}${inPlan ? '' : `<div class="card-note !mt-1">Creates a PayPal invoice with the VeriFactu verification link, so ${esc(rec.recipient?.name)} can pay online.</div>`}${done || (!rec.paypal?.id && OPEN(st) ? buttons(id, 'collect', 'Send with PayPal', 'Dismiss', a.busy) : '<div class="card-note">Already on PayPal or settled.</div>')}</div>`;
     if (a.type === 'propose_mark_paid') {
       const method = METHOD[a.args?.method] ? a.args.method : 'BANK_TRANSFER';
-      return `<div class="card">${head(`Record payment · ${METHOD[method]}`)}${done || (OPEN(st) ? buttons(id, 'mark-paid', 'Mark as paid') : '<div class="card-note">Nothing to record.</div>')}</div>`;
+      return `<div class="${card()}">${head(`Record payment · ${METHOD[method]}`)}${done || (OPEN(st) ? buttons(id, 'mark-paid', 'Mark as paid', 'Dismiss', a.busy) : '<div class="card-note">Nothing to record.</div>')}</div>`;
     }
     if (a.type === 'propose_cancel') {
       const blocked = st === 'PAID' ? 'Paid invoices need a corrective invoice, not a cancellation.' : st === 'CANCELLED' && cancelled().has(rec.number) ? 'Already cancelled.' : '';
-      return `<div class="card card-bad">${head('Cancel invoice (anulación)')}<div class="card-note !mt-1">${a.args?.reason ? `Reason: ${esc(a.args.reason)}. ` : ''}The invoice is never edited: a VeriFactu cancellation record is appended to the chain${rec.paypal?.id ? ' and the PayPal invoice is cancelled' : ''}.</div>${done || (blocked ? `<div class="card-note text-warn">${esc(blocked)}</div>` : buttons(id, 'cancel', 'Cancel invoice', 'Keep it'))}</div>`;
+      return `<div class="${card(' card-bad')}">${head('Cancel invoice (anulación)')}<div class="card-note !mt-1">${a.args?.reason ? `Reason: ${esc(a.args.reason)}. ` : ''}The invoice is never edited: a VeriFactu cancellation record is appended to the chain${rec.paypal?.id ? ' and the PayPal invoice is cancelled' : ''}.</div>${done || (blocked ? `<div class="card-note text-warn">${esc(blocked)}</div>` : buttons(id, 'cancel', 'Cancel invoice', 'Keep it', a.busy))}</div>`;
     }
     return '';
   }
+  // An invoice proposal: a small paper document with the actions attached, and the engine's checks underneath.
   const inv = normalize(a.args);
-  const t = totals(inv.lines);
-  const base = t.breakdown.reduce((s, b) => s + Number(b.base), 0);
-  const warn = [];
-  if (inv.recipient.nif && !validNif(inv.recipient.nif)) warn.push(`NIF ${inv.recipient.nif} looks invalid`);
-  if (!inv.recipient.nif) warn.push('No NIF: valid for a simplified invoice only');
-  const rows = inv.lines.map((l) => `<tr><td class="py-0.5 pr-2">${esc(l.description)}</td><td class="num whitespace-nowrap pr-2 text-right">${l.qty} × ${eur(l.price)}</td><td class="text-right text-soft">${l.vat}%</td></tr>`).join('');
-  return `<div class="card">
-    <div class="flex items-center gap-2"><div class="text-xs text-soft">Invoice proposal</div><div class="ml-auto truncate text-[11px] text-soft">${esc(inv.recipient.email || 'no email: PayPal link only')}</div></div>
-    <div class="mt-1 font-semibold">${esc(inv.recipient.name)} ${inv.recipient.nif ? `<span class="num text-xs text-soft">${esc(inv.recipient.nif)}</span>` : ''}</div>
-    <table class="mt-2 w-full text-xs">${rows}</table>
-    <div class="mt-2 flex justify-between text-sm"><span class="text-soft">Base <span class="num">${eur(base)}</span> + VAT <span class="num">${eur(t.taxTotal)}</span></span><b class="num">${eur(t.total)}</b></div>
-    <div class="mt-1 text-[11px] text-soft">Due ${inv.dueDays ? `in ${inv.dueDays} days` : 'on receipt'}</div>
-    ${warn.length ? `<div class="mt-2 text-[11px] text-warn">${warn.map(esc).join(' · ')}</div>` : ''}
-    ${done || `<div class="mt-3 flex flex-wrap gap-2"><button class="btn-primary" data-act="issue-send" data-id="${id}">Issue + collect with PayPal</button><button class="btn-ghost" data-act="issue" data-id="${id}">Issue only</button><button class="btn-ghost" data-act="discard" data-id="${id}">Discard</button></div>`}
-  </div>`;
+  const paper = proposalPaperHtml(inv, { issuer: state.company, today: today() });
+  const checks = checksHtml(engineChecks(inv, { known: clients(state.records), today: today() }));
+  const foot = a.done
+    ? `<div class="proposal-result${a.ok === false ? ' is-fail' : a.skipped ? ' is-skipped' : ''}"><span>${esc(a.done)}</span>${a.number ? `<button class="btn-ghost !min-h-8" data-view="${esc(a.number)}">View record</button>` : ''}</div>`
+    : `<div class="proposal-actions"><button class="btn-primary" data-act="issue-send" data-id="${id}"${a.busy ? ' disabled' : ''}>${a.busy ? 'Working…' : 'Issue + collect with PayPal'}</button><button class="btn-ghost" data-act="issue" data-id="${id}"${a.busy ? ' disabled' : ''}>Issue only</button><button class="btn-ghost" data-act="discard" data-id="${id}"${a.busy ? ' disabled' : ''}>Discard</button></div>`;
+  return `<div class="proposal${a.done ? ' is-done' : ''}">${paper}${foot}</div>${checks}`;
 }
 
+const TICK = {
+  todo: '<span class="tick tick-todo"></span>',
+  busy: '<span class="tick tick-busy"></span>',
+  done: '<svg viewBox="0 0 16 16" class="tick tick-done" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="8" r="6.6" class="tick-ring"/><path d="M5 8.4l2.1 2.1L11 6"/></svg>',
+  fail: '<svg viewBox="0 0 16 16" class="tick tick-fail" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="8" cy="8" r="6.6" class="tick-ring"/><path d="M8 4.8V8.6M8 11v.01"/></svg>',
+  skip: '<svg viewBox="0 0 16 16" class="tick tick-skip" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="8" cy="8" r="6.6" class="tick-ring"/><path d="M5.5 8h5"/></svg>',
+};
+const tickOf = (s) => (s.busy ? 'busy' : s.skipped || s.dead || s.done === 'Dismissed.' ? 'skip' : s.done ? (s.ok === false ? 'fail' : 'done') : 'todo');
+
+// Two or more actions in one reply become a plan: a checklist, each step approved on its own.
+function planCard(m, mi) {
+  const steps = stepViews(m.actions);
+  const p = planProgress(steps);
+  const pending = pendingLowRisk(steps);
+  const items = steps.map((s, ai) => `<li class="plan-step plan-${tickOf(s)}">${TICK[tickOf(s)]}<div class="min-w-0 flex-1">${actionCard(m.actions[ai], mi, ai, true)}</div></li>`).join('');
+  const lead = p.complete
+    ? `<div class="plan-summary" role="status"><b>Plan complete.</b> ${esc(planSummary(steps))}.</div>`
+    : pending.length ? `<button class="btn-primary plan-all" data-plan-all="${mi}"${m.running ? ' disabled' : ''}>${m.running ? 'Approving…' : 'Approve all reminders and collections'}<span class="plan-count">${pending.length}</span></button>` : '';
+  return `<section class="plan" aria-label="Plan with ${p.total} steps">
+    <header class="plan-head"><span class="plan-title">Plan · ${p.total} steps</span><span class="plan-count-text" aria-live="polite">${p.done} of ${p.total} done</span></header>
+    <progress class="plan-bar" max="${p.total}" value="${p.done}" aria-label="Plan progress"></progress>
+    ${lead}
+    <ol class="plan-steps">${items}</ol>
+    ${hasHighRisk(steps) ? '<p class="card-note plan-note">Invoices, payments and cancellations are always approved one by one.</p>' : ''}
+  </section>`;
+}
+
+const STARTER_ICON = {
+  invoice: '<path d="M5 2.5h6l3 3v8a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-10a1 1 0 0 1 1-1z"/><path d="M11 2.5v3h3M6.5 9h5M6.5 11.5h3"/>',
+  plan: '<path d="M3 4.5l1.3 1.3 2.2-2.4M3 10.5l1.3 1.3 2.2-2.4M9 5h4.5M9 11h4.5"/>',
+  bell: '<path d="M4.5 11V8a3.5 3.5 0 0 1 7 0v3l1 1.5h-9zM6.8 14h2.4"/>',
+  percent: '<path d="M12.5 3.5l-9 9M5 6.4a1.3 1.3 0 1 0 0-.01M11 12.6a1.3 1.3 0 1 0 0-.01"/>',
+};
+const STARTERS = [['invoice', 0], ['plan', 1], ['bell', 2], ['percent', 3]];
+const introHtml = () => `<div class="agent-intro">
+  <p>Hi, I'm Cuadra. Tell me who to invoice and for what, in English or Spanish. I draft it as a document, the engine checks every figure, and nothing is issued until you press the button.</p>
+  <div class="starters" role="list" aria-label="Things to try">${STARTERS.map(([icon, i]) => `<button class="starter" role="listitem" data-ex="${i}"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${STARTER_ICON[icon]}</svg><span>${esc(EXAMPLES[i])}</span></button>`).join('')}</div>
+</div>`;
+
+let chatCount = -1;
+let chatFocus = null; // index of a fresh answer to bring to the top of the chat, so its proposal is read from the start
 function renderChat() {
-  $('#chat').innerHTML = state.chat.length
-    ? state.chat.map((m, mi) => (m.role === 'user'
-      ? `<div class="bubble-user">${esc(m.text)}</div>`
-      : `<div class="space-y-2"><div class="bubble-agent${m.text === 'Thinking…' ? ' thinking' : ''}">${md(m.text)}</div>${(m.actions || []).map((a, ai) => actionCard(a, mi, ai)).join('')}</div>`)).join('')
-    : '<div class="pt-1 text-sm leading-relaxed text-soft">Tell me who to invoice and for what, in English or Spanish. I draft the invoice, you confirm it, and Cuadra issues a VeriFactu record and collects it with PayPal. I can also chase late payers, record payments, cancel mistakes and draft your quarterly VAT return.</div>';
-  $('#chat').scrollTop = $('#chat').scrollHeight;
+  const el = $('#chat');
+  const keep = el.scrollTop;
+  const wasAtEnd = el.scrollHeight - el.scrollTop - el.clientHeight < 90;
+  el.innerHTML = state.chat.length
+    ? state.chat.map((m, mi) => {
+      if (m.role === 'user') return `<div class="bubble-user">${esc(m.text)}</div>`;
+      const acts = m.actions || [];
+      const body = isPlan(acts) ? planCard(m, mi) : acts.map((a, ai) => actionCard(a, mi, ai)).join('');
+      return `<div class="space-y-2"><div class="bubble-agent${m.text === 'Thinking…' ? ' thinking' : ''}">${md(m.text)}</div>${body}</div>`;
+    }).join('')
+    : introHtml();
+  $('#examples').hidden = !state.chat.length;
+  const grew = state.chat.length !== chatCount;
+  chatCount = state.chat.length;
+  let top = grew || wasAtEnd ? el.scrollHeight : keep;
+  const fresh = chatFocus !== null ? el.children[chatFocus] : null;
+  if (fresh) top = el.scrollTop + fresh.getBoundingClientRect().top - el.getBoundingClientRect().top - 6;
+  chatFocus = null;
+  el.scrollTo({ top, behavior: 'instant' });
 }
 
 function renderKpis() {
@@ -432,7 +552,7 @@ function openDetail(r) {
         ${manage}${xmlBlock}${closeBtns}
       </div>
     </div>`;
-    const act = async (fnc) => { $('#dlg').close(); toast(await fnc()); save(); await renderAll(); };
+    const act = async (fnc) => { $('#dlg').close(); toast((await fnc()).text); save(); await renderAll(); };
     $('#dlgBody').querySelector('[data-dl="paid"]')?.addEventListener('click', () => act(() => markPaid(r, $('#payMethod').value)));
     $('#dlgBody').querySelector('[data-dl="cancel"]')?.addEventListener('click', () => {
       if (window.confirm(`Cancel ${r.number}? A VeriFactu cancellation record will be added to the chain.`)) act(() => annul(r, $('#cancelReason').value.trim()));
@@ -445,11 +565,10 @@ function openDetail(r) {
 
 // ---------- events ----------
 
-$('#ask').addEventListener('submit', async (ev) => {
-  ev.preventDefault();
-  const text = $('#msg').value.trim();
+// One turn with the agent: the question goes out with the ledger context, the answer comes back as text and proposals.
+async function ask(text) {
+  text = String(text || '').trim();
   if (!text) return;
-  $('#msg').value = '';
   state.chat.push({ role: 'user', text });
   const pending = { role: 'agent', text: 'Thinking…', actions: [] };
   state.chat.push(pending);
@@ -458,11 +577,30 @@ $('#ask').addEventListener('submit', async (ev) => {
   pending.text = r.error ? `⚠ ${r.error}` : r.reply;
   pending.actions = r.error ? [] : (r.actions || []).slice(0, 10);
   if (state.chat.length > 60) state.chat = state.chat.slice(-60);
+  chatFocus = state.chat.indexOf(pending);
   save();
   await renderAll();
+}
+
+$('#ask').addEventListener('submit', (ev) => {
+  ev.preventDefault();
+  const text = $('#msg').value.trim();
+  if (!text) return;
+  $('#msg').value = '';
+  ask(text);
 });
 
 $('#chat').addEventListener('click', async (ev) => {
+  const all = ev.target.closest('button[data-plan-all]');
+  if (all) return approveAll(Number(all.dataset.planAll));
+  const view = ev.target.closest('button[data-view]');
+  if (view) {
+    const rec = findInvoice(state.records, view.dataset.view);
+    if (rec) openDetail(rec);
+    return;
+  }
+  const starter = ev.target.closest('[data-ex]');
+  if (starter) return ask(EXAMPLES[starter.dataset.ex]);
   const b = ev.target.closest('button[data-act]');
   if (!b) return;
   const [mi, ai] = b.dataset.id.split('-').map(Number);
@@ -471,27 +609,11 @@ $('#chat').addEventListener('click', async (ev) => {
   if (b.dataset.act === 'open-vat') {
     vatQ = b.dataset.q;
     renderVat();
-    $('#vat').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    $('#vat').scrollIntoView({ behavior: reducedMotion() ? 'auto' : 'smooth', block: 'center' });
+    if (!a.done) await run(mi, ai, 'open-vat');
     return;
   }
-  if (a.done || a.busy) return;
-  a.busy = true;
-  b.disabled = true;
-  b.textContent = 'Working…';
-  const rec = findInvoice(state.records, a.args?.number);
-  try {
-    if (b.dataset.act === 'discard') a.done = 'Dismissed.';
-    else if (b.dataset.act === 'issue' || b.dataset.act === 'issue-send') a.done = await issue(normalize(a.args), b.dataset.act === 'issue-send');
-    else if (!rec) a.done = 'Invoice not found.';
-    else if (b.dataset.act === 'remind') a.done = await remind(rec);
-    else if (b.dataset.act === 'collect') a.done = await sendWithPaypal(rec);
-    else if (b.dataset.act === 'mark-paid') a.done = await markPaid(rec, METHOD[a.args?.method] ? a.args.method : 'BANK_TRANSFER');
-    else if (b.dataset.act === 'cancel') a.done = await annul(rec, String(a.args?.reason || '').slice(0, 200));
-  } finally {
-    delete a.busy;
-    save();
-    await renderAll();
-  }
+  await run(mi, ai, b.dataset.act);
 });
 
 $('#rows').addEventListener('click', async (ev) => {
@@ -507,9 +629,9 @@ $('#rows').addEventListener('click', async (ev) => {
     if (r.error) toast(r.error);
     else Object.assign(rec.paypal, { status: r.status, payerUrl: safeUrl(r.payerUrl) || rec.paypal.payerUrl });
   } else if (b.dataset.do === 'remind') {
-    toast(await remind(rec));
+    toast((await remind(rec)).text);
   } else if (b.dataset.do === 'collect') {
-    toast(await sendWithPaypal(rec));
+    toast((await sendWithPaypal(rec)).text);
   }
   save();
   await renderAll();

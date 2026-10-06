@@ -3,6 +3,9 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { buildAlta, buildAnulacion, verifyChain } from '../public/js/verifactu.js';
 import { buildSample } from '../public/js/ledger.js';
 import { chainBlocks, chainStatus, chainTrackHtml, MAX_BLOCKS } from '../public/js/chain.js';
+import { engineChecks, checksHtml, matchClient } from '../public/js/checks.js';
+import { isPlan, planProgress, pendingLowRisk, hasHighRisk, planSummary, LOW_RISK } from '../public/js/plan.js';
+import { proposalPaperHtml } from '../public/js/proposal.js';
 
 let failed = 0;
 const expect = (label, ok) => { console.log(ok ? 'ok  ' : 'FAIL', label); if (!ok) failed++; };
@@ -69,6 +72,38 @@ const hiddenBreak = chainBlocks(longForged, await verifyChain(longForged));
 expect('a break inside the collapsed block is shown on it, and the visible blocks become unverifiable', hiddenBreak[0].state === 'broken' && hiddenBreak.slice(1).every((b) => b.state === 'unverifiable'));
 const html = chainTrackHtml(chainBlocks([{ ...sample[0], number: '<img src=x onerror=alert(1)>' }], { ok: true, count: 1 }));
 expect('the strip escapes record text and shows a ghost block when empty', !html.includes('<img') && chainTrackHtml([]).includes('Your first record will appear here'));
+
+// 3. The agent as a colleague (A3): engine checks, plan logic and the proposal paper
+const flat = (t) => t.replace(/ /g, ' ');
+const known = [{ name: 'Acme Studio SL', nif: 'B12345674', email: 'billing@acme.example' }, { name: 'Lumen Foods SL', nif: 'B87654323', email: '' }];
+const proposal = { recipient: { name: 'Acme Studio SL', nif: 'B12345674', email: 'billing@acme.example' }, lines: [{ description: 'Consulting', qty: 3, price: 60, vat: 21 }], dueDays: 15 };
+const checksFor = (patch = {}, k = known) => Object.fromEntries(engineChecks({ ...proposal, ...patch }, { known: k, today: '2026-10-06' }).map((c) => [c.key, c]));
+const ck = checksFor();
+expect('checks: a client already in the ledger is matched with its NIF and email', ck.client.level === 'ok' && ck.client.text === 'Client matched from ledger: Acme Studio SL · NIF B12345674 · billing@acme.example');
+expect('checks: an unknown client is "New client"', checksFor({ recipient: { name: 'Globex SL', nif: '', email: '' } }).client.text.startsWith('New client'));
+expect('checks: a known name with a different NIF, or the NIF of another client, is a warning and never a silent match', checksFor({ recipient: { name: 'acme  studio sl', nif: 'B76543214', email: '' } }).client.level === 'warn' && checksFor({ recipient: { name: 'Acme Studio SL', nif: 'B87654323', email: '' } }).client.level === 'warn' && /belongs to Lumen Foods SL/.test(checksFor({ recipient: { name: 'Acme Studio SL', nif: 'B87654323', email: '' } }).client.text) && matchClient(known, { name: 'Lumen Foods SL', nif: '' }).by === 'name' && matchClient(known, { name: 'x', nif: 'B12345674' }).by === 'nif');
+const badNif = checksFor({ recipient: { ...proposal.recipient, nif: 'B12345675' } }).nif;
+expect('checks: NIF checksum valid, invalid and missing', ck.nif.text === 'NIF checksum valid' && badNif.level === 'bad' && /NIF looks invalid/.test(badNif.text) && checksFor({ recipient: { name: 'X', nif: '', email: '' } }).nif.level === 'warn');
+expect('checks: VAT names every rate used', ck.vat.text === 'VAT 21 % (general rate)' && checksFor({ lines: [...proposal.lines, { description: 'Book', qty: 1, price: 10, vat: 10 }, { description: 'Course', qty: 1, price: 10, vat: 0 }] }).vat.text === 'VAT 21 % (general rate) and 10 % (reduced rate) and 0 % (exempt)');
+expect('checks: totals come from the engine (180,00 + 37,80 = 217,80 €)', flat(ck.totals.text) === 'Totals computed by the engine: 180,00 + 37,80 = 217,80 €');
+expect('checks: a total written by the model is ignored', flat(checksFor({ total: '9999.00', taxTotal: '1.00' }).totals.text) === 'Totals computed by the engine: 180,00 + 37,80 = 217,80 €');
+expect('checks: due date is computed from today', ck.due.text === 'Due in 15 days (21 Oct 2026)' && checksFor({ dueDays: 0 }).due.text === 'Due on receipt (6 Oct 2026)' && checksFor({ dueDays: 1 }).due.text === 'Due in 1 day (7 Oct 2026)');
+expect('checks: the server note is honest about when the server looks', ck.server.level === 'info' && /before PayPal receives it/.test(ck.server.text) && Object.keys(ck).join() === 'client,nif,vat,totals,due,server');
+const hostile = '<img src=x onerror=alert(1)>';
+const html2 = checksHtml(engineChecks({ ...proposal, recipient: { name: hostile, nif: '', email: '' } }, { known: [{ name: hostile, nif: '', email: '' }], today: '2026-10-06' }));
+expect('checks: rendered text is escaped and labelled for screen readers', !html2.includes('<img') && html2.includes('Engine checks') && html2.includes('sr-only'));
+
+const step = (type, extra = {}) => ({ type, ...extra });
+const mixed = [step('propose_reminder'), step('propose_collect'), step('propose_cancel'), step('propose_mark_paid'), step('propose_invoice'), step('show_vat_return')];
+expect('plan: two or more actions in one reply make a plan', !isPlan([step('propose_invoice')]) && isPlan([step('propose_reminder'), step('show_vat_return')]) && !isPlan(undefined));
+expect('plan: only reminders and collections can be approved together', LOW_RISK.join() === 'propose_reminder,propose_collect' && pendingLowRisk(mixed).map((x) => x.a.type).join() === 'propose_reminder,propose_collect' && hasHighRisk(mixed) && !hasHighRisk([step('propose_reminder'), step('show_vat_return')]));
+expect('plan: finished, running and dead steps are not offered again', pendingLowRisk([step('propose_reminder', { done: 'Reminder sent' }), step('propose_collect', { busy: true }), step('propose_collect', { dead: true }), step('propose_reminder')]).map((x) => x.ai).join() === '3');
+expect('plan: progress counts resolved steps ("2 of 3 done")', JSON.stringify(planProgress([step('propose_reminder', { done: 'x' }), step('propose_collect', { dead: true }), step('show_vat_return')])) === '{"total":3,"done":2,"complete":false}' && planProgress([step('show_vat_return', { done: 'x' })]).complete);
+expect('plan: the summary counts what really happened', planSummary([step('propose_reminder', { done: 'a', ok: true }), step('propose_reminder', { done: 'a', ok: true }), step('propose_collect', { done: 'b', ok: true }), step('propose_collect', { done: 'c', ok: false }), step('propose_cancel', { done: 'Dismissed.', skipped: true }), step('show_vat_return', { done: 'd', ok: true })]) === '2 reminders sent · 1 invoice sent with PayPal · VAT draft reviewed · 1 not done · 1 dismissed' && planSummary([]) === 'Nothing was changed');
+
+const paper = flat(proposalPaperHtml({ ...proposal, recipient: { name: 'A <b>&</b> B', nif: 'B12345674', email: 'x@y.example' } }, { issuer: { name: 'Estudio Norte SL', nif: 'B76543214' }, today: '2026-10-06' }));
+expect('proposal paper: issuer, client, lines, base, VAT, total and due date', ['Estudio Norte SL', 'NIF B76543214', 'Consulting', '3 × 60,00 €', '180,00 €', 'VAT 21 %', '37,80 €', '217,80 €', 'Due in 15 days · 21 Oct 2026', 'Factura / Invoice'].every((t) => paper.includes(t)));
+expect('proposal paper: client text is escaped', !paper.includes('<b>&</b>') && paper.includes('A &lt;b&gt;&amp;&lt;/b&gt; B'));
 
 console.log(failed ? `${failed} UI check(s) failed` : 'all UI checks passed');
 process.exit(failed ? 1 : 0);
