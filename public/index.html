@@ -34,7 +34,7 @@
   <header class="mx-auto max-w-7xl px-4 pb-3 pt-4">
     <div class="topbar">
       <img class="topbar-mark" src="/favicon.svg" width="36" height="36" alt="">
-      <div class="topbar-name">Cuadra</div>
+      <h1 class="topbar-name">Cuadra</h1>
       <p class="brand-line topbar-brand">Describe the sale. Confirm. Get paid. Stay compliant.</p>
       <nav class="topbar-actions" aria-label="Company and tools">
         <span id="company" class="company-chip"></span>
@@ -77,7 +77,8 @@
         </div>
         <button id="sheetClose" type="button" class="icon-btn ml-auto lg:hidden" aria-label="Close the agent" title="Close">✕</button>
       </div>
-      <div id="chat" class="chat" aria-live="polite"></div>
+      <div id="chat" class="chat"></div>
+      <div id="srLive" class="sr-only" role="status" aria-live="polite"></div>
       <div id="examples" class="chips"></div>
       <form id="ask" class="composer">
         <input id="msg" maxlength="500" autocomplete="off" aria-label="Message to the agent" placeholder="Describe the sale…" class="field flex-1">

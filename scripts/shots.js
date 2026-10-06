@@ -3,7 +3,8 @@
 // hackathons/paypal/galeria/ronda2 (outside this repo; pass another folder as the first argument).
 // Besides the pictures it asserts what the eye should not have to find: no console errors, no 4xx/5xx, no horizontal
 // scroll of the page, the activity log of the #selftest flow, the print rules of the verification page, the tour
-// undoing its tamper test, and the behaviours that existed before round 2 (ledger buttons, detail dialog, exports...). It borrows the Playwright of the sibling ops/video folder, like scripts/social-card.js.
+// undoing its tamper test, the tour timing, prefers-reduced-motion, and the behaviours that existed before round 2
+// (ledger buttons, detail dialog, exports...). It borrows the Playwright of the sibling ops/video folder, like scripts/social-card.js.
 // Usage: node scripts/shots.js [outDir]
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, statSync } from 'node:fs';
@@ -280,6 +281,41 @@ try {
     await settle(page, 1200);
     check('flows: Start empty shows the guided empty state and a ghost block, and keeps the activity log and the plan', (await page.locator('.empty-actions button').count()) === 2 && (await page.locator('.block-ghost').count()) === 1 && /Ledger reset/.test(await page.locator('#activityList').innerText()) && /Autónomo plan/i.test(await page.locator('#plan').innerText()));
     await ctx.close();
+  }
+
+  // 9. The tour on its own clock, and with prefers-reduced-motion (no animation, final states at once, manual tour).
+  {
+    const ctx = await newContext({ ...VIEWS[0].opts });
+    const page = await ctx.newPage();
+    watch(page, 'tour timing');
+    const step = async () => (await page.locator('.tour-k').textContent()).trim();
+    await page.goto(`${BASE}/`, { waitUntil: 'networkidle' });
+    await page.waitForSelector('#tour:not([hidden])');
+    const t0 = Date.now();
+    await page.waitForFunction(() => document.querySelector('.tour-k')?.textContent.includes('Step 2'), null, { timeout: 9000 });
+    check('tour: the first visit starts it by itself and each step lasts about five seconds', Date.now() - t0 > 3500 && Date.now() - t0 < 8000);
+    await page.hover('#tour');
+    await settle(page, 6200);
+    check('tour: hovering the caption pauses it', /Step 2 of 4/.test(await step()));
+    await page.mouse.move(10, 10);
+    await page.waitForFunction(() => document.querySelector('#tour')?.hidden, null, { timeout: 20000 });
+    check('tour: it ends by itself, heals the tamper test and does not come back on the next visit', (await page.locator('.chain-block.broken').count()) === 0 && (await page.evaluate(() => localStorage.getItem('cuadra-tour-v1'))) === '1');
+    await page.reload({ waitUntil: 'networkidle' });
+    await settle(page, 800);
+    check('tour: the ? button replays it', (await page.locator('#tour').isHidden()) && (await (async () => { await page.click('#tourBtn'); await page.waitForSelector('#tour:not([hidden])'); return /Step 1 of 4/.test(await step()); })()));
+    await ctx.close();
+
+    const calm = await newContext({ ...VIEWS[0].opts, reducedMotion: 'reduce' });
+    const still = await calm.newPage();
+    watch(still, 'reduced motion');
+    await still.goto(`${BASE}/?tour=1`, { waitUntil: 'domcontentloaded' });
+    await still.waitForSelector('.chain-block');
+    await settle(still, 300);
+    check('reduced motion: the chain verdict is there at once and nothing is animated', /Chain verified/.test(await still.locator('#chainStatus').innerText()) && (await still.evaluate(() => [...document.querySelectorAll('.chain-block')].every((b) => getComputedStyle(b).animationName === 'none'))));
+    await still.waitForSelector('#tour:not([hidden])');
+    await settle(still, 6500);
+    check('reduced motion: the tour waits for Next instead of advancing, and Escape closes it', /Step 1 of 4/i.test(await still.locator('.tour-k').innerText()) && (await (async () => { await still.keyboard.press('Escape'); await settle(still, 300); return still.locator('#tour').isHidden(); })()));
+    await calm.close();
   }
 } finally {
   await browser.close();

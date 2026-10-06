@@ -41,6 +41,7 @@ const fresh = () => ({
 let tampered = null;
 let vatQ = null;
 let chainSig = '';
+let chainCount = 0;
 let chainRun = 0;
 let chainFx = null; // { newFrom }: records at or after this index just entered the chain and animate in
 let chainNow = null;
@@ -377,6 +378,7 @@ const TICK = {
   fail: '<svg viewBox="0 0 16 16" class="tick tick-fail" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="8" cy="8" r="6.6" class="tick-ring"/><path d="M8 4.8V8.6M8 11v.01"/></svg>',
   skip: '<svg viewBox="0 0 16 16" class="tick tick-skip" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="8" cy="8" r="6.6" class="tick-ring"/><path d="M5.5 8h5"/></svg>',
 };
+const STATE_WORD = { todo: 'To do', busy: 'Working', done: 'Done', fail: 'Needs attention', skip: 'Skipped' };
 const tickOf = (s) => (s.busy ? 'busy' : s.skipped || s.dead || s.done === 'Dismissed.' ? 'skip' : s.done ? (s.ok === false ? 'fail' : 'done') : 'todo');
 
 // Two or more actions in one reply become a plan: a checklist, each step approved on its own.
@@ -384,7 +386,7 @@ function planCard(m, mi) {
   const steps = stepViews(m.actions);
   const p = planProgress(steps);
   const pending = pendingLowRisk(steps);
-  const items = steps.map((s, ai) => `<li class="plan-step plan-${tickOf(s)}">${TICK[tickOf(s)]}<div class="min-w-0 flex-1">${actionCard(m.actions[ai], mi, ai, true)}</div></li>`).join('');
+  const items = steps.map((s, ai) => `<li class="plan-step plan-${tickOf(s)}">${TICK[tickOf(s)]}<span class="sr-only">${STATE_WORD[tickOf(s)]}: </span><div class="min-w-0 flex-1">${actionCard(m.actions[ai], mi, ai, true)}</div></li>`).join('');
   const lead = p.complete
     ? `<div class="plan-summary" role="status"><b>Plan complete.</b> ${esc(planSummary(steps))}.</div>`
     : pending.length ? `<button class="btn-primary plan-all" data-plan-all="${mi}"${m.running ? ' disabled' : ''}>${m.running ? 'Approving…' : 'Approve all reminders and collections'}<span class="plan-count">${pending.length}</span></button>` : '';
@@ -531,8 +533,9 @@ async function renderChain() {
     items.forEach((el, i) => el.style.setProperty('--d', `${Math.round((i / Math.max(1, items.length - 1)) * (SWEEP_MS - 450))}ms`));
     const broken = track.querySelector('.chain-block.broken');
     if (broken) broken.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'auto' });
-    else if (track.querySelector('.is-new')) track.scrollLeft = track.scrollWidth;
+    else if (track.querySelector('.is-new') || state.records.length !== chainCount) track.scrollLeft = track.scrollWidth;
     else track.scrollLeft = left;
+    chainCount = state.records.length;
     clearTimeout(statusTimer);
     if (motion && state.records.length) {
       $('#chainStatus').innerHTML = statusHtml({ tone: 'warn', headline: 'Verifying chain…', detail: '' });
@@ -609,7 +612,7 @@ function openDetail(r) {
   const anul = isAnulacion(r);
   const st = anul ? '' : status(r);
   const xmlBlock = `<details><summary class="cursor-pointer text-fg/80">${anul ? 'RegistroAnulacion' : 'RegistroAlta'} XML</summary><pre class="num mt-2 max-h-56 overflow-auto whitespace-pre-wrap break-all rounded bg-ink p-2 text-[11px]">${esc(recordXml(r))}</pre></details>`;
-  const buttons = `<div class="flex flex-wrap gap-2"><button class="btn-ghost" data-dl="link">Copy verification link</button><button class="btn-ghost" data-dl="print">Open printable</button><button class="btn-ghost" data-dl="xml">Download XML</button><button class="btn-primary" data-dl="close">Close</button></div>`;
+  const actionsHtml = `<div class="flex flex-wrap gap-2"><button class="btn-ghost" data-dl="link">Copy verification link</button><button class="btn-ghost" data-dl="print">Open printable</button><button class="btn-ghost" data-dl="xml">Download XML</button><button class="btn-primary" data-dl="close">Close</button></div>`;
   const pay = r.paypal?.id ? `${esc(r.paypal.status)}${safeUrl(r.paypal.payerUrl) ? ` · <a class="link" href="${esc(r.paypal.payerUrl)}" target="_blank" rel="noopener noreferrer">payer page</a>` : ''}` : r.paidAt ? `Paid by ${esc(METHOD[r.paidMethod] || 'transfer')} on ${esc(fmtDate(r.paidAt))}` : 'Not on PayPal';
   const manage = !anul && OPEN(st) ? `<div class="space-y-2 rounded-lg border border-line p-2"><div class="text-soft">Manage</div>
       <div class="flex flex-wrap gap-2"><select id="payMethod" class="field !w-auto !py-1 text-xs" aria-label="Payment method"><option value="BANK_TRANSFER">Bank transfer</option><option value="CASH">Cash</option><option value="OTHER">Other</option></select><button class="btn-ghost" data-dl="paid">Mark paid</button></div>
@@ -620,7 +623,7 @@ function openDetail(r) {
       <div id="dlgVerdict" class="verdict !px-3 !py-2 !text-xs" data-state="checking" role="status">Checking the record…</div>
       ${anul ? '' : `<div><div class="text-soft">Status</div><span class="${BADGE[st] || 'badge'}">${esc(st.replace(/_/g, ' '))}</span></div><div><div class="text-soft">Payment</div><div>${pay}</div></div>`}
       ${chainFacts(r)}
-      ${manage}${xmlBlock}${buttons}
+      ${manage}${xmlBlock}${actionsHtml}
     </div>
   </div>`;
   const body = $('#dlgBody');
@@ -684,6 +687,8 @@ async function ask(text) {
   chatFocus = Math.max(0, state.chat.indexOf(pending) - 1); // the question and its answer, read from the top
   const n = pending.actions.length;
   if (n) log('agent', 'proposal', '', n > 1 ? `Plan · ${n} steps` : describe(pending.actions[0]));
+  // The chat is re-drawn as a whole, so it is not a live region: the answer is announced once, here.
+  $('#srLive').textContent = `Cuadra: ${pending.text}${n ? ` ${n === 1 ? '1 proposal is' : `${n} proposals are`} waiting for your decision.` : ''}`;
   save();
   await renderAll();
 }
@@ -736,7 +741,10 @@ $('#rows').addEventListener('click', async (ev) => {
   if (b.dataset.do === 'refresh') {
     const r = await post('/api/paypal', { op: 'status', id: rec.paypal.id, token: rec.paypal.token });
     if (r.error) toast(r.error);
-    else Object.assign(rec.paypal, { status: r.status, payerUrl: safeUrl(r.payerUrl) || rec.paypal.payerUrl });
+    else {
+      if (r.status !== rec.paypal.status) log('paypal', 'sync', rec.number, `${rec.paypal.status} → ${r.status}`);
+      Object.assign(rec.paypal, { status: r.status, payerUrl: safeUrl(r.payerUrl) || rec.paypal.payerUrl });
+    }
   } else if (b.dataset.do === 'remind') {
     toast((await remind(rec)).text);
   } else if (b.dataset.do === 'collect') {
@@ -900,11 +908,10 @@ function updateFab() {
 }
 
 // First-visit tour: four captions over the real page. The same tour opens from the "?" button and from ?tour=1.
-const isDesktop = () => matchMedia('(min-width: 1024px)').matches;
 let tour = null;
 let tourTamper = false;
 const TOUR = [
-  { title: 'Describe the sale. The agent proposes, you confirm.', text: 'Say who to invoice and for what. Nothing is issued until you press the button.', target: () => (isDesktop() ? $('#agent') : $('#openAgent') || $('#agent')) },
+  { title: 'Describe the sale. The agent proposes, you confirm.', text: 'Say who to invoice and for what. Nothing is issued until you press the button.', target: () => (wide.matches ? $('#agent') : $('#openAgent') || $('#agent')) },
   { title: 'Every invoice is a VeriFactu record, hash-chained.', text: 'Each block is one record. It carries the hash of the one before it and is re-verified whenever the ledger changes.', target: () => $('#chainStrip') },
   {
     title: 'Try to tamper: the chain breaks at the record.',
@@ -923,7 +930,7 @@ async function runTour(explicit = false) {
     onEnd: () => {
       tour = null;
       window.scrollTo({ top: 0, behavior: reducedMotion() ? 'auto' : 'smooth' });
-      if (isDesktop()) $('#msg').focus({ preventScroll: true });
+      if (wide.matches) $('#msg').focus({ preventScroll: true });
     },
   });
 }
