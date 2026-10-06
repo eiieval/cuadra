@@ -873,6 +873,7 @@ let sheetFrom = null;
 function openSheet() {
   if (wide.matches || sheetOpen()) return;
   sheetFrom = document.activeElement;
+  tour?.stop();
   document.body.classList.add('sheet-open');
   const agent = $('#agent');
   agent.setAttribute('role', 'dialog');
@@ -935,6 +936,8 @@ async function runTour(explicit = false) {
   });
 }
 $('#tourBtn').onclick = () => runTour(true);
+// Someone who starts typing, or opens the agent sheet, is using the app: the tour steps aside.
+$('#msg').addEventListener('focus', () => tour?.stop());
 
 // Pricing: Cuadra's own plans are PayPal Subscriptions, created server-side and approved on PayPal.
 document.querySelectorAll('[data-plan]').forEach((b) => b.addEventListener('click', async () => {

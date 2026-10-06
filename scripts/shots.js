@@ -303,6 +303,9 @@ try {
     await page.reload({ waitUntil: 'networkidle' });
     await settle(page, 800);
     check('tour: the ? button replays it', (await page.locator('#tour').isHidden()) && (await (async () => { await page.click('#tourBtn'); await page.waitForSelector('#tour:not([hidden])'); return /Step 1 of 4/.test(await step()); })()));
+    await page.focus('#msg');
+    await settle(page, 400);
+    check('tour: starting to type in the agent box closes it', await page.locator('#tour').isHidden());
     await ctx.close();
 
     const calm = await newContext({ ...VIEWS[0].opts, reducedMotion: 'reduce' });
