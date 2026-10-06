@@ -24,6 +24,7 @@
       <nav class="topbar-actions" aria-label="Company and tools">
         <span id="company" class="company-chip"></span>
         <a href="#pricing" id="plan" class="badge">Free plan</a>
+        <button id="tourBtn" class="icon-btn" aria-label="Replay the quick tour" title="Quick tour">?</button>
         <div class="relative">
           <button id="menuBtn" class="icon-btn" aria-haspopup="menu" aria-expanded="false" aria-controls="menu" aria-label="More actions" title="More actions">⋯</button>
           <div id="menu" class="menu" role="menu" aria-label="More actions" hidden>
@@ -72,7 +73,7 @@
     <div id="rightCol" class="min-w-0 space-y-4">
       <div id="kpis" class="grid grid-cols-2 gap-3 xl:grid-cols-4"></div>
 
-      <section class="panel p-4" aria-labelledby="ledger-title">
+      <section id="ledger" class="panel p-4" aria-labelledby="ledger-title">
         <div class="flex flex-wrap items-center gap-3">
           <h2 id="ledger-title" class="font-semibold">Ledger</h2>
           <span id="ledgerCount" class="text-xs text-soft"></span>
@@ -163,6 +164,7 @@
     </div>
   </section>
 
+  <div id="tour" class="tour" role="region" aria-live="polite" aria-label="Quick tour" hidden></div>
   <div id="toast" role="status" aria-live="polite" class="toast hidden"></div>
   <dialog id="dlg" aria-label="Record detail"><div id="dlgBody"></div></dialog>
   <footer class="px-4 pb-8 text-center text-[11px] text-soft">Demo on PayPal Sandbox and the AEAT test QR service. Records stay in your browser. Not a certified invoicing system. <a class="underline" href="https://github.com/eiieval/cuadra" target="_blank" rel="noopener noreferrer">Source code</a></footer>

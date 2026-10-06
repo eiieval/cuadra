@@ -13,6 +13,7 @@ import { reduceActivity, activityRows, activityHtml } from './js/activity.js';
 import { renderDocument } from './js/document.js';
 import { qrSvg } from './js/qr.js';
 import { sanitizeRecord, shareable, shareUrl, verifyRecord } from './js/share.js';
+import { startTour, tourSeen } from './js/tour.js';
 
 const $ = (s) => document.querySelector(s);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -793,6 +794,7 @@ $('#sample').onclick = async () => {
   if (state.records.length && !window.confirm('Replace your demo ledger with a sample quarter?')) return;
   await loadSample();
   toast('Sample quarter loaded: paid, overdue and open invoices, plus one cancelled duplicate.');
+  if (!tourSeen()) runTour();
 };
 $('#reset').onclick = async () => {
   if (!window.confirm('Delete all demo invoices and start with an empty ledger?')) return;
@@ -829,6 +831,36 @@ document.addEventListener('keydown', (ev) => {
   setMenu(false);
   menuBtn.focus();
 });
+
+// First-visit tour: four captions over the real page. The same tour opens from the "?" button and from ?tour=1.
+const isDesktop = () => matchMedia('(min-width: 1024px)').matches;
+let tour = null;
+let tourTamper = false;
+const TOUR = [
+  { title: 'Describe the sale. The agent proposes, you confirm.', text: 'Say who to invoice and for what. Nothing is issued until you press the button.', target: () => (isDesktop() ? $('#agent') : $('#openAgent') || $('#agent')) },
+  { title: 'Every invoice is a VeriFactu record, hash-chained.', text: 'Each block is one record. It carries the hash of the one before it and is re-verified whenever the ledger changes.', target: () => $('#chainStrip') },
+  {
+    title: 'Try to tamper: the chain breaks at the record.',
+    text: 'One amount is changed in memory: its stored hash no longer matches, and every block after it turns grey.',
+    target: () => $('#chainStrip'),
+    enter: async () => { tourTamper = await setTamper(true); },
+    leave: async () => { if (tourTamper) { tourTamper = false; await setTamper(false); } },
+  },
+  { title: 'Collect with PayPal, chase late payers, draft your VAT.', text: 'Reminders, collections and the Modelo 303 draft all come from the same ledger.', target: () => [$('#ledger'), $('#vat')], block: 'start' },
+];
+async function runTour(explicit = false) {
+  await tour?.stop();
+  if (!state.records.length) await loadSample('system'); // the tour needs a ledger to talk about
+  tour = startTour(TOUR, {
+    focus: explicit,
+    onEnd: () => {
+      tour = null;
+      window.scrollTo({ top: 0, behavior: reducedMotion() ? 'auto' : 'smooth' });
+      if (isDesktop()) $('#msg').focus({ preventScroll: true });
+    },
+  });
+}
+$('#tourBtn').onclick = () => runTour(true);
 
 // Pricing: Cuadra's own plans are PayPal Subscriptions, created server-side and approved on PayPal.
 document.querySelectorAll('[data-plan]').forEach((b) => b.addEventListener('click', async () => {
@@ -894,10 +926,14 @@ if (Speech) {
   };
 }
 
+// The tour starts by itself on the first visit to the plain page, and always with ?tour=1 (never in the local self-test).
+const query = new URLSearchParams(location.search);
+const wantsTour = !location.hash.startsWith('#selftest') && (query.get('tour') === '1' || (!location.hash && !query.get('subscription') && !tourSeen()));
 if (firstVisit) await loadSample('system');
 await renderAll();
 await checkSubscription();
 syncPaypal();
+if (wantsTour) runTour(query.get('tour') === '1');
 
 // Local visual self-test (localhost only): plays the demo flow so a headless browser can screenshot it.
 //   #selftest          sample quarter, invoice approved with PayPal, chase plan (first step), VAT draft,
