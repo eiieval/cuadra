@@ -6,6 +6,7 @@ import { chainBlocks, chainStatus, chainTrackHtml, MAX_BLOCKS } from '../public/
 import { engineChecks, checksHtml, matchClient } from '../public/js/checks.js';
 import { isPlan, planProgress, pendingLowRisk, hasHighRisk, planSummary, LOW_RISK } from '../public/js/plan.js';
 import { proposalPaperHtml } from '../public/js/proposal.js';
+import { reduceActivity, activityRows, activityHtml, relTime, MAX_ACTIVITY, EVENTS } from '../public/js/activity.js';
 
 let failed = 0;
 const expect = (label, ok) => { console.log(ok ? 'ok  ' : 'FAIL', label); if (!ok) failed++; };
@@ -104,6 +105,23 @@ expect('plan: the summary counts what really happened', planSummary([step('propo
 const paper = flat(proposalPaperHtml({ ...proposal, recipient: { name: 'A <b>&</b> B', nif: 'B12345674', email: 'x@y.example' } }, { issuer: { name: 'Estudio Norte SL', nif: 'B76543214' }, today: '2026-10-06' }));
 expect('proposal paper: issuer, client, lines, base, VAT, total and due date', ['Estudio Norte SL', 'NIF B76543214', 'Consulting', '3 × 60,00 €', '180,00 €', 'VAT 21 %', '37,80 €', '217,80 €', 'Due in 15 days · 21 Oct 2026', 'Factura / Invoice'].every((t) => paper.includes(t)));
 expect('proposal paper: client text is escaped', !paper.includes('<b>&</b>') && paper.includes('A &lt;b&gt;&amp;&lt;/b&gt; B'));
+
+// 4. Activity (A6): an append-only, bounded log with a pure reducer
+const t0 = Date.parse('2026-10-06T10:00:00Z');
+const a1 = reduceActivity([], { actor: 'agent', event: 'proposal', detail: 'Invoice for Acme Studio SL · 217,80 €' }, t0);
+const a2 = reduceActivity(a1, { actor: 'you', event: 'approved', number: 'CU-0008', detail: 'Invoice for Acme' }, t0 + 5000);
+const a3 = reduceActivity(a2, { actor: 'system', event: 'issued', number: 'CU-0008', detail: 'VeriFactu record chained' }, t0 + 6000);
+expect('activity: entries are appended in order with actor, event, number, detail and time', a3.length === 3 && a3.map((e) => e.event).join() === 'proposal,approved,issued' && a3[2].number === 'CU-0008' && a3[0].actor === 'agent' && a3[0].at === '2026-10-06T10:00:00.000Z' && !('number' in a3[0]));
+expect('activity: the reducer never mutates the log or edits an earlier entry', a1.length === 1 && a2.length === 2 && a3[0] === a1[0] && a3[1] === a2[1] && Object.isFrozen(a1) === false);
+expect('activity: an unknown actor is recorded as the system, and text is cleaned and bounded', reduceActivity([], { actor: 'root', event: 'issued', detail: `x\u0000\n${'y'.repeat(400)}` }, t0)[0].actor === 'system' && reduceActivity([], { actor: 'you', event: 'issued', detail: `a\u0000b\n${'y'.repeat(400)}` }, t0)[0].detail.length === 200 && !/[\u0000-\u001f]/.test(reduceActivity([], { actor: 'you', event: 'issued', detail: 'a\u0000b\nc' }, t0)[0].detail));
+let big = [];
+for (let i = 0; i < MAX_ACTIVITY + 25; i++) big = reduceActivity(big, { actor: 'you', event: 'approved', number: `N-${i}` }, t0 + i);
+expect(`activity: the log keeps the last ${MAX_ACTIVITY} entries and drops the oldest`, big.length === MAX_ACTIVITY && big[0].number === 'N-25' && big.at(-1).number === `N-${MAX_ACTIVITY + 24}`);
+const rows = activityRows(a3, 20, t0 + 6000 + 3 * 60000);
+expect('activity: the panel lists the newest first with relative times and readable labels', rows.map((r) => r.label).join() === 'Issued,Approved,Proposal shown' && rows[0].when === '3 min ago' && rows[2].when === '3 min ago' && activityRows(big, 20, t0 + 9e6).length === 20 && activityRows(big, 20).at(0).number === `N-${MAX_ACTIVITY + 24}`);
+expect('activity: relative times read naturally', relTime(new Date(t0).toISOString(), t0 + 10000) === 'just now' && relTime(new Date(t0).toISOString(), t0 + 2 * 3600000) === '2 h ago' && relTime(new Date(t0).toISOString(), t0 + 30 * 3600000) === 'yesterday' && relTime(new Date(t0).toISOString(), t0 + 5 * 86400000) === '5 d ago' && relTime(new Date(t0).toISOString(), t0 + 40 * 86400000) === '2026-10-06');
+expect('activity: every event of the flow has a label (proposal, approval, dismissal, issue, PayPal, reminder, payment, cancellation, sync, tamper, sample, reset)', ['proposal', 'approved', 'dismissed', 'issued', 'sent', 'reminder', 'payment', 'cancelled', 'sync', 'tamper_on', 'tamper_off', 'sample', 'reset'].every((e) => EVENTS[e]));
+expect('activity: rendered entries are escaped and name the actor for screen readers', !activityHtml(activityRows(reduceActivity([], { actor: 'you', event: 'approved', number: '<b>', detail: '<img src=x onerror=alert(1)>' }, t0), 20, t0)).includes('<img') && activityHtml(activityRows(a3, 20, t0)).includes('Engine: ') && activityHtml([]).includes('Nothing yet'));
 
 console.log(failed ? `${failed} UI check(s) failed` : 'all UI checks passed');
 process.exit(failed ? 1 : 0);

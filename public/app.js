@@ -9,6 +9,7 @@ import { chainBlocks, chainStatus, chainTrackHtml, statusHtml } from './js/chain
 import { engineChecks, checksHtml } from './js/checks.js';
 import { proposalPaperHtml } from './js/proposal.js';
 import { isPlan, planProgress, planSummary, pendingLowRisk, hasHighRisk } from './js/plan.js';
+import { reduceActivity, activityRows, activityHtml } from './js/activity.js';
 
 const $ = (s) => document.querySelector(s);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -31,6 +32,7 @@ const fresh = () => ({
   company: { name: 'Estudio Norte SL', nif: 'B76543214', series: `CU${crypto.getRandomValues(new Uint32Array(1))[0].toString(36).slice(0, 4).toUpperCase()}` },
   records: [],
   chat: [],
+  activity: [],
 });
 let tampered = null;
 let vatQ = null;
@@ -47,8 +49,11 @@ let statusTimer;
 let state = (() => { try { return JSON.parse(localStorage.getItem(KEY)); } catch { return null; } })();
 const firstVisit = !state;
 state = state || fresh();
+state.activity = Array.isArray(state.activity) ? state.activity : [];
 state.chat = (state.chat || []).filter((m) => m.text !== 'Thinking…');
 for (const m of state.chat) { delete m.running; for (const a of m.actions || []) delete a.busy; }
+// Append-only activity log: who did what, shown in the Activity panel and exportable as JSON.
+const log = (actor, event, number = '', detail = '') => { state.activity = reduceActivity(state.activity, { actor, event, number, detail }); };
 const save = () => { if (tampered) return; try { localStorage.setItem(KEY, JSON.stringify(state)); } catch { /* storage unavailable */ } };
 
 async function post(url, body) {
@@ -148,6 +153,7 @@ async function issue(inv, withPaypal) {
   state.records.push(rec);
   chainFx = { newFrom: state.records.length - 1 };
   flash = { number, at: Date.now() };
+  log('system', 'issued', number, `VeriFactu record chained · hash ${rec.hash.slice(0, 6)}…`);
   save();
   await renderAll();
   const issued = (extra = '') => toast([bit(number, 'num font-semibold'), ' issued · hash ', bit(`${rec.hash.slice(0, 6)}…`), extra]);
@@ -155,6 +161,8 @@ async function issue(inv, withPaypal) {
   $('#chainStrip').scrollIntoView({ behavior: reducedMotion() ? 'auto' : 'smooth', block: 'nearest' });
   if (!withPaypal) return { ok: true, number, text: `Issued ${number}. VeriFactu record chained.` };
   const error = await collect(rec);
+  if (error) log('paypal', 'paypal_error', number, error);
+  else log('paypal', 'sent', number, 'PayPal invoice created and sent');
   if (!error) issued(' · sent with PayPal');
   return error ? { ok: false, number, text: `Issued ${number}, but PayPal failed: ${error}` } : { ok: true, number, text: `Issued ${number} and sent with PayPal.` };
 }
@@ -163,6 +171,8 @@ async function sendWithPaypal(rec) {
   if (rec.paypal?.id) return { ok: false, text: `${rec.number} is already on PayPal.` };
   if (!OPEN(status(rec))) return { ok: false, text: `${rec.number} is ${status(rec).toLowerCase()}, nothing to collect.` };
   const error = await collect(rec);
+  if (error) log('paypal', 'paypal_error', rec.number, error);
+  else log('paypal', 'sent', rec.number, 'PayPal invoice created and sent');
   return error ? { ok: false, text: `PayPal failed for ${rec.number}: ${error}` } : { ok: true, text: `${rec.number} sent with PayPal. The client can pay online now.` };
 }
 
@@ -176,6 +186,7 @@ async function syncPaypal() {
   for (const rec of due) {
     const r = await post('/api/paypal', { op: 'status', id: rec.paypal.id, token: rec.paypal.token });
     if (r.error || r.status === rec.paypal.status) continue;
+    log('paypal', 'sync', rec.number, `${rec.paypal.status} → ${r.status}`);
     Object.assign(rec.paypal, { status: r.status, payerUrl: safeUrl(r.payerUrl) || rec.paypal.payerUrl });
     changed++;
     if (status(rec) === 'PAID') toast(`${rec.number} was paid with PayPal.`);
@@ -189,6 +200,7 @@ async function remind(rec) {
   const r = await post('/api/paypal', { op: 'remind', id: rec.paypal.id, token: rec.paypal.token });
   if (r.error) return { ok: false, text: `Reminder failed: ${r.error}` };
   Object.assign(rec.paypal, { status: r.status, payerUrl: safeUrl(r.payerUrl) || rec.paypal.payerUrl });
+  log('paypal', 'reminder', rec.number, 'PayPal reminder sent to the client');
   return { ok: true, text: `Reminder sent for ${rec.number}.` };
 }
 
@@ -200,6 +212,7 @@ async function markPaid(rec, method = 'BANK_TRANSFER') {
     rec.paypal.status = r.status;
   }
   Object.assign(rec, { paidAt: today(), paidMethod: method });
+  log('you', 'payment', rec.number, `${METHOD[method] || 'other method'}${rec.paypal?.id ? ', recorded in PayPal too' : ''}`);
   return { ok: true, text: `${rec.number} marked as paid by ${METHOD[method] || 'other method'}${rec.paypal?.id ? ', also in PayPal' : ''}.` };
 }
 
@@ -216,8 +229,21 @@ async function annul(rec, reason) {
   state.records.push(record);
   chainFx = { newFrom: state.records.length - 1 };
   flash = { number: rec.number, at: Date.now() };
+  log('system', 'cancelled', rec.number, `RegistroAnulacion chained · hash ${record.hash.slice(0, 6)}…`);
   toast([bit(rec.number, 'num font-semibold'), ' cancelled · cancellation hash ', bit(`${record.hash.slice(0, 6)}…`)]);
   return { ok: true, text: `${rec.number} cancelled with a chained VeriFactu cancellation record${rec.paypal?.id ? '; the PayPal invoice is cancelled too' : ''}.` };
+}
+
+// One line about a proposal, for the activity log.
+function describe(a) {
+  const n = a.args?.number;
+  if (a.type === 'propose_invoice') { const inv = normalize(a.args); return `Invoice for ${inv.recipient.name} · ${eur(totals(inv.lines).total)}`; }
+  if (a.type === 'propose_reminder') return `PayPal reminder for ${n}`;
+  if (a.type === 'propose_collect') return `Send ${n} with PayPal`;
+  if (a.type === 'propose_mark_paid') return `Record the payment of ${n}`;
+  if (a.type === 'propose_cancel') return `Cancel ${n}`;
+  if (a.type === 'show_vat_return') return 'Modelo 303 draft';
+  return String(a.type);
 }
 
 // Runs one proposal of the agent after the user approved it (act = the button's data-act) and stores the outcome on it.
@@ -240,6 +266,7 @@ async function run(mi, ai, act) {
   const a = state.chat[mi]?.actions?.[ai];
   if (!a || a.done || a.busy) return;
   a.busy = true;
+  log('you', act === 'discard' ? 'dismissed' : 'approved', a.args?.number, describe(a));
   renderChat();
   try {
     await perform(a, act);
@@ -450,6 +477,13 @@ function renderInvoices() {
   if (flash) $('#rows').querySelectorAll('.row-flash').forEach((tr) => tr.style.setProperty('--flash-elapsed', `${Date.now() - flash.at}ms`));
 }
 
+function renderActivity() {
+  $('#activityList').innerHTML = activityHtml(activityRows(state.activity, 20));
+  const total = state.activity.length;
+  $('#activityCount').textContent = total ? `${Math.min(20, total)} of ${total}` : '';
+}
+setInterval(renderActivity, 30000); // relative times: "2 min ago" keeps counting
+
 function renderVat() {
   const q = vatQ || returnQuarter(today());
   $('#vatQ').textContent = q;
@@ -517,6 +551,7 @@ async function renderAll() {
   renderChat();
   renderInvoices();
   renderVat();
+  renderActivity();
   renderPlan();
   await renderChain();
 }
@@ -604,6 +639,8 @@ async function ask(text) {
   pending.actions = r.error ? [] : (r.actions || []).slice(0, 10);
   if (state.chat.length > 60) state.chat = state.chat.slice(-60);
   chatFocus = state.chat.indexOf(pending);
+  const n = pending.actions.length;
+  if (n) log('agent', 'proposal', '', n > 1 ? `Plan · ${n} steps` : describe(pending.actions[0]));
   save();
   await renderAll();
 }
@@ -681,22 +718,30 @@ $('#vatCsv').onclick = () => {
   download(`cuadra-modelo-303-${v.quarter}.csv`, lines.join('\n'), 'text/csv');
 };
 
-$('#tamper').onclick = async () => {
+// Tamper test: alter an issued amount in memory (never saved) so the chain visibly breaks at that record, and undo it.
+// Returns true when the state changed. The first-visit tour uses the same two moves.
+async function setTamper(on) {
   const altas = state.records.map((r, i) => (isAnulacion(r) ? -1 : i)).filter((i) => i >= 0);
-  if (!altas.length) return;
-  if (!tampered) {
+  if (!altas.length || Boolean(tampered) === on) return false;
+  if (on) {
     const i = altas.length > 1 ? altas[altas.length - 2] : altas[0];
     tampered = { i, total: state.records[i].total };
     state.records[i].total = money(Number(state.records[i].total) + 100);
+    log('you', 'tamper_on', state.records[i].number, `Total changed from ${eur(tampered.total)} to ${eur(state.records[i].total)} in memory only, nothing is saved`);
   } else {
-    state.records[tampered.i].total = tampered.total;
+    const rec = state.records[tampered.i];
+    rec.total = tampered.total;
     tampered = null;
+    log('you', 'tamper_off', rec.number, `Original total ${eur(rec.total)} restored`);
   }
   await renderAll();
-};
+  return true;
+}
+$('#tamper').onclick = () => setTamper(!tampered);
 
 const csvCell = (v) => { let s = String(v ?? ''); if (/^[=+\-@]/.test(s)) s = `'${s}`; return `"${s.replace(/"/g, '""')}"`; };
 $('#xml').onclick = () => download('cuadra-verifactu-records.xml', `<?xml version="1.0" encoding="UTF-8"?>\n<RegistrosFacturacion>\n${state.records.map(recordXml).join('\n')}\n</RegistrosFacturacion>\n`, 'application/xml');
+$('#exportActivity').onclick = () => download('cuadra-activity.json', `${JSON.stringify({ company: state.company, exportedAt: new Date().toISOString(), entries: state.activity }, null, 2)}\n`, 'application/json');
 $('#csv').onclick = () => {
   const head = 'record,number,date,client,client_nif,base,vat,total,status,due,hash';
   const rows = state.records.map((r) => (isAnulacion(r)
@@ -705,11 +750,20 @@ $('#csv').onclick = () => {
   download('cuadra-libro-registro.csv', [head, ...rows].join('\n'), 'text/csv');
 };
 
-async function loadSample() {
+// A new ledger replaces the records and the chat, but never the activity log (it is append-only) or the plan.
+function startOver() {
+  const { activity, subscription } = state;
   tampered = null;
   state = fresh();
+  state.activity = activity;
+  if (subscription) state.subscription = subscription;
+}
+
+async function loadSample(actor = 'you') {
+  startOver();
   state.records = await buildSample({ issuer: state.company, today: today() });
   vatQ = null;
+  log(actor, 'sample', '', `${state.records.length} records: paid, overdue, open and one cancelled`);
   save();
   await renderAll();
 }
@@ -720,8 +774,8 @@ $('#sample').onclick = async () => {
 };
 $('#reset').onclick = async () => {
   if (!window.confirm('Delete all demo invoices and start with an empty ledger?')) return;
-  tampered = null;
-  state = fresh();
+  startOver();
+  log('you', 'reset', '', 'Ledger emptied');
   save();
   await renderAll();
 };
@@ -818,23 +872,38 @@ if (Speech) {
   };
 }
 
-if (firstVisit) await loadSample();
+if (firstVisit) await loadSample('system');
 await renderAll();
 await checkSubscription();
 syncPaypal();
 
 // Local visual self-test (localhost only): plays the demo flow so a headless browser can screenshot it.
+//   #selftest          sample quarter, invoice approved with PayPal, chase plan (first step), VAT draft,
+//                      "Close my quarter" plan approved in one go, tamper test on and off
+//   #selftest-tamper   the same, but it stops with the tamper test on (broken chain)
+//   #selftest-detail   the same, then opens the detail of the last invoice
+// body[data-selftest] becomes "done" when the flow has finished.
 if (location.hostname === 'localhost' && location.hash.startsWith('#selftest')) {
+  document.body.dataset.selftest = 'running';
   await loadSample();
-  const run = async (text, act) => {
+  const click = (selector) => [...document.querySelectorAll(selector)].at(-1)?.click();
+  const say = async (text, then) => {
     $('#msg').value = text;
     $('#ask').requestSubmit();
     for (let i = 0; i < 80 && state.chat.at(-1)?.text === 'Thinking…'; i++) await sleep(100);
-    if (act) document.querySelector(`#chat button[data-act="${act}"]`)?.click();
-    await sleep(400);
+    await sleep(250);
+    if (then) then();
+    await sleep(700);
   };
-  await run(EXAMPLES[0], 'issue-send');
-  await run(EXAMPLES[2]);
-  await run(EXAMPLES[3]);
+  await say(EXAMPLES[0], () => click('#chat button[data-act="issue-send"]'));
+  await say(EXAMPLES[2], () => document.querySelector('#chat button[data-act="collect"]')?.click());
+  await say(EXAMPLES[3], () => click('#chat button[data-act="open-vat"]'));
+  await say(EXAMPLES[1], () => click('#chat [data-plan-all]'));
+  await sleep(1800);
+  window.scrollTo(0, 0);
+  await setTamper(true);
+  await sleep(600);
+  if (location.hash !== '#selftest-tamper') await setTamper(false);
   if (location.hash === '#selftest-detail') openDetail(invoicesOf(state.records).at(-1));
+  document.body.dataset.selftest = 'done';
 }

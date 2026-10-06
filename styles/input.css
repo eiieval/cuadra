@@ -249,12 +249,25 @@ button.block:hover { transform: translateY(-2px); border-color: rgba(255, 255, 2
 .tick-skip { color: var(--soft); }
 .plan-skip .card, .plan-skip .proposal { opacity: .7; }
 
+/* ---------- activity: who did what ---------- */
+.activity { max-height: 21rem; margin: 0; padding: 0; overflow-y: auto; list-style: none; }
+.activity-row { display: flex; align-items: flex-start; gap: .6rem; padding: .5rem 0; border-top: 1px solid var(--line); font-size: 12.5px; line-height: 1.4; }
+.activity-row:first-child { border-top: 0; }
+.activity-ic { display: flex; width: 1.5rem; height: 1.5rem; flex: none; align-items: center; justify-content: center; border-radius: 999px; background: rgba(255, 255, 255, .07); color: var(--text); }
+.activity-ic svg { width: .9rem; height: .9rem; }
+.activity-you .activity-ic { color: var(--link); background: color-mix(in srgb, var(--link) 14%, transparent); }
+.activity-agent .activity-ic { color: var(--warn); background: color-mix(in srgb, var(--warn) 12%, transparent); }
+.activity-system .activity-ic { color: var(--ok); background: color-mix(in srgb, var(--ok) 12%, transparent); }
+.activity-detail { color: var(--soft); }
+.activity-when { flex: none; font-size: 11px; color: var(--soft); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.activity-empty { padding: .75rem 0; font-size: 12.5px; color: var(--soft); }
+
 /* ---------- toast and dialog ---------- */
 .toast { position: fixed; border-left: 3px solid var(--ok); left: 50%; bottom: 1rem; z-index: 70; width: min(92vw, 520px); transform: translateX(-50%); border-radius: .9rem; border: 1px solid rgba(255, 255, 255, .16); background: var(--surface-2); padding: .75rem 1rem; font-size: .875rem; box-shadow: 0 18px 50px rgba(0, 0, 0, .55); animation: toast-in .3s var(--ease); }
 @keyframes toast-in { from { opacity: 0; transform: translate(-50%, 10px); } to { opacity: 1; transform: translate(-50%, 0); } }
 @keyframes toast-in-top { from { opacity: 0; transform: translate(-50%, -10px); } to { opacity: 1; transform: translate(-50%, 0); } }
 /* On desktop the toast sits at the top, next to the chain where the new block lands, and never over the composer. */
-@media (min-width: 1024px) { .toast { top: 1rem; bottom: auto; animation-name: toast-in-top; } }
+@media (min-width: 1024px) { .toast { top: 1rem; bottom: auto; width: 460px; animation-name: toast-in-top; } }
 
 dialog { background: var(--surface); color: var(--text); border: 1px solid rgba(255, 255, 255, .12); border-radius: 1rem; padding: 1.25rem; width: min(960px, calc(100vw - 1.5rem)); max-height: calc(100vh - 1.5rem); overflow-y: auto; }
 dialog::backdrop { background: rgba(4, 6, 10, .72); }

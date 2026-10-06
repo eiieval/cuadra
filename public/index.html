@@ -33,6 +33,7 @@
             <div class="menu-sep" role="separator"></div>
             <button id="xml" class="menu-item" role="menuitem">Export XML</button>
             <button id="csv" class="menu-item" role="menuitem">Export CSV</button>
+            <button id="exportActivity" class="menu-item" role="menuitem">Export activity (JSON)</button>
           </div>
         </div>
       </nav>
@@ -86,18 +87,28 @@
         </div>
       </section>
 
-      <section id="vat" class="panel p-4" aria-labelledby="vat-title">
-        <div class="flex flex-wrap items-center gap-2">
-          <h2 id="vat-title" class="font-semibold">VAT return draft</h2>
-          <span class="text-xs text-soft">Modelo 303 · <span id="vatQ"></span></span>
-          <div class="ml-auto flex gap-1">
-            <button id="vatPrev" class="btn-ghost !min-h-8 !px-2.5" aria-label="Previous quarter">‹</button>
-            <button id="vatNext" class="btn-ghost !min-h-8 !px-2.5" aria-label="Next quarter">›</button>
-            <button id="vatCsv" class="btn-ghost !min-h-8">CSV</button>
+      <div class="grid gap-4 xl:grid-cols-2">
+        <section id="vat" class="panel p-4" aria-labelledby="vat-title">
+          <div class="flex flex-wrap items-center gap-2">
+            <h2 id="vat-title" class="font-semibold">VAT return draft</h2>
+            <span class="text-xs text-soft">Modelo 303 · <span id="vatQ"></span></span>
+            <div class="ml-auto flex gap-1">
+              <button id="vatPrev" class="btn-ghost !min-h-8 !px-2.5" aria-label="Previous quarter">‹</button>
+              <button id="vatNext" class="btn-ghost !min-h-8 !px-2.5" aria-label="Next quarter">›</button>
+              <button id="vatCsv" class="btn-ghost !min-h-8">CSV</button>
+            </div>
           </div>
-        </div>
-        <div id="vatBody" class="mt-2"></div>
-      </section>
+          <div id="vatBody" class="mt-2"></div>
+        </section>
+        <section id="activity" class="panel p-4" aria-labelledby="activity-title">
+          <div class="flex flex-wrap items-center gap-2">
+            <h2 id="activity-title" class="font-semibold">Activity</h2>
+            <span class="text-xs text-soft">who did what, newest first</span>
+            <span id="activityCount" class="ml-auto text-xs text-soft"></span>
+          </div>
+          <ol id="activityList" class="activity mt-2"></ol>
+        </section>
+      </div>
     </div>
   </main>
 
