@@ -30,6 +30,7 @@ The signature of the product is **the living chain**: the book that proves itsel
 - **Plans.** A reply with two or more actions becomes a checklist ("Plan · 4 steps", "2 of 3 done"). Each step is approved on its own; only reminders and collections can be approved together, never invoices, payments or cancellations. **"Close my quarter"** (or "Cierra el trimestre") builds one: reminders for overdue invoices that are on PayPal, collections for the rest, and the VAT draft.
 - **Activity.** An append-only log of who did what (agent proposed, you approved, the engine issued, PayPal sent, you tampered), last 500 entries, exportable as JSON from the ⋯ menu.
 - **A document you can send.** The invoice document is bilingual ("Factura / Invoice") with two QR codes: Verify at AEAT and, when the invoice is on PayPal, Pay with PayPal. **Copy verification link** and **Open printable** open `verify.html`: the record travels in the URL fragment (never sent to a server), is re-hashed in the client's browser and shown as "✓ This document matches its hash" or "✗ Altered", ready to print or save as PDF.
+- **The ledger is an AG Grid.** From 768 px up the invoice table is [AG Grid Community](https://www.ag-grid.com/) (MIT, self-hosted): sort by any column, a quick text filter, status chips with counts (All, Open, Overdue, Paid, Cancelled), a pinned totals row that adds up the rows you are looking at (it agrees with the KPIs), cancellation records as shorter rows ("↳ Cancels CU-0006"), the full hash in a tooltip, keyboard access to the row buttons and CSV export through the grid's own API (the rows you see, in the register format, formula-safe). The theme is built with the Theming API from the same `:root` tokens as the rest of the app. The grid is loaded after the first render and only on wide screens; if its file does not arrive in 3 seconds, fails the integrity check or throws, the plain HTML table stays, with every feature, and nothing is shown to the user.
 - **On a phone** the agent opens from a floating "Ask Cuadra" button as a full-screen sheet, the ledger rows become cards and the chain scrolls sideways.
 
 ## How it works
@@ -138,7 +139,7 @@ The server tells the client to draft before issuing and never to compute VAT fig
 - PayPal and Gemini credentials live only in server environment variables.
 - Every PayPal invoice and subscription is bound to the browser session that created it with an HMAC token: nobody can read, chase, cancel or mark paid another session's invoices.
 - Server-side validation of every invoice: Spanish VAT rates only, valid NIF/CIF/NIE, bounded quantities and prices, totals recomputed.
-- Strict Content-Security-Policy, no third-party scripts: Tailwind is compiled and the QR library is vendored from the npm registry with its integrity verified.
+- Strict Content-Security-Policy, no third-party scripts: Tailwind is compiled; the QR library and AG Grid Community are vendored from the npm registry (`public/vendor/<lib>/VERSION.md` records version, license and SHA-256), `npm test` recomputes their hashes, and the page inserts them with a Subresource Integrity attribute, so a modified file is refused and the fallback takes over.
 - Same-origin checks, JSON-only endpoints, per-IP rate limits, bounded request bodies, generic user-facing errors and redacted server logs.
 - Model output is escaped before rendering; ledger data and chat history are passed to the model as data, never as instructions.
 - CSV exports are protected against formula injection.
@@ -166,9 +167,9 @@ No dependencies to install: Node 20 or later is enough.
 ```
 api/        agent.js · paypal.js · health.js       serverless functions
 lib/        agent, LLM client, PayPal client, validation, request guard
-public/     index.html · verify.html · app.js · verify.js · vendored QR
+public/     index.html · verify.html · app.js · verify.js · vendor/ (QR, AG Grid, each with VERSION.md)
   js/       verifactu.js · ledger.js (engine) · chain.js · checks.js · plan.js · proposal.js · document.js · share.js
-            activity.js · tour.js · fmt.js · qr.js
+            activity.js · tour.js · fmt.js · qr.js · status.js · grid.js (ledger grid) · vendor.js (lazy loader + SRI)
 styles/     input.css (design tokens and components) → public/styles.css via Tailwind
 docs/       og.html (source of public/og.png)
 mcp/        server.js                                MCP server (stdio)
@@ -177,7 +178,7 @@ scripts/    test.js · ui-test.js · mcp-test.js · shots.js · social-card.js �
 
 ## Status
 
-Demo on PayPal Sandbox and the AEAT test verification service. Not a certified invoicing system: a production deployment adds the electronic signature, submission to the AEAT and server-side storage. The QR library is qrcode-generator 1.4.4 (MIT).
+Demo on PayPal Sandbox and the AEAT test verification service. Not a certified invoicing system: a production deployment adds the electronic signature, submission to the AEAT and server-side storage. Vendored libraries: qrcode-generator 1.4.4 and AG Grid Community 36.2.0, both MIT.
 
 ## License
 

@@ -95,7 +95,16 @@
           <h2 id="ledger-title" class="font-semibold">Ledger</h2>
           <span id="ledgerCount" class="text-xs text-soft"></span>
         </div>
-        <div class="mt-3 overflow-x-auto">
+        <!-- From 768px up the ledger is an AG Grid (loaded after the first render); the table below is what a phone gets,
+             and what stays if the grid cannot load. -->
+        <div id="ledgerTools" class="ledger-tools" hidden>
+          <label class="sr-only" for="ledgerSearch">Filter the ledger</label>
+          <input id="ledgerSearch" type="search" class="field ledger-search" placeholder="Filter by client, number, status…" autocomplete="off" maxlength="60">
+          <div id="ledgerChips" class="ledger-chips" role="group" aria-label="Filter by status"></div>
+          <button id="ledgerCsv" type="button" class="btn-ghost ml-auto !min-h-8" title="Exports the rows you see, in the register format">Export CSV</button>
+        </div>
+        <div id="ledgerGrid" class="ledger-grid" role="region" aria-label="Invoice ledger" hidden></div>
+        <div id="ledgerTable" class="mt-3 overflow-x-auto">
           <table class="ledger">
             <thead>
               <tr><th>Number</th><th>Client</th><th class="!text-right">Total</th><th>Status</th><th class="hidden xl:table-cell">Due</th><th><span class="sr-only">Actions</span></th></tr>

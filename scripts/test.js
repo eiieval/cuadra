@@ -1,8 +1,10 @@
 // Offline tests: VeriFactu engine against the official AEAT example, QR generation, and API security. No keys needed.
 import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import vm from 'node:vm';
 import { altaHashInput, anulacionHashInput, sha256Hex, buildAlta, buildAnulacion, verifyChain, qrUrl, totals, validNif, altaXml, recordXml } from '../public/js/verifactu.js';
 import { stateOf, summary, vatReturn, returnQuarter, filingDeadline, clients, cancelledNumbers, buildSample, nextNumber, findInvoice } from '../public/js/ledger.js';
+import { VENDOR, loadVendor } from '../public/js/vendor.js';
 
 let failed = 0;
 const expect = (label, ok) => { console.log(ok ? 'ok  ' : 'FAIL', label); if (!ok) failed++; };
@@ -71,6 +73,23 @@ const qr = sandbox.q(0, 'M');
 qr.addData(chain[0].qr);
 qr.make();
 expect('QR code SVG is generated for the AEAT URL', qr.createSvgTag({ cellSize: 4, margin: 2, scalable: true }).startsWith('<svg'));
+
+// 3b. Vendored AG Grid and AG Charts (MIT, from the npm registry): the bytes on disk are the ones VERSION.md records and
+// the ones the integrity attribute in public/js/vendor.js pins, and nothing is a package.json dependency.
+const bytes = (path) => readFileSync(new URL(`../${path}`, import.meta.url));
+const sha256 = (path) => createHash('sha256').update(bytes(path)).digest();
+const pkg = JSON.parse(bytes('package.json'));
+// VERSION.md is a table of "| key | value |" rows: read it as data.
+const versionTable = (dir) => Object.fromEntries(bytes(`public/vendor/${dir}/VERSION.md`).toString('utf8').split('\n').filter((l) => l.startsWith('| ')).map((l) => l.split('|').slice(1, -1).map((c) => c.trim().replaceAll('`', ''))));
+const VENDORED = [{ lib: 'grid', dir: 'ag-grid', file: 'ag-grid-community.min.noStyle.js', name: 'ag-grid-community', version: '36.2.0' }];
+for (const { lib, dir, file, name, version } of VENDORED) {
+  const t = versionTable(dir);
+  expect(`vendor ${name}: the bundle's SHA-256 is the one recorded in VERSION.md`, /^[0-9a-f]{64}$/.test(t['SHA-256']) && sha256(`public/vendor/${dir}/${file}`).toString('hex') === t['SHA-256'] && t.File.includes(file) && parseInt(t.Size, 10) === bytes(`public/vendor/${dir}/${file}`).length);
+  expect(`vendor ${name}: VERSION.md pins version ${version} and the MIT license, and the license text is kept next to the bundle`, t.Version === version && t.Package === name && t.License.startsWith('MIT') && bytes(`public/vendor/${dir}/LICENSE.txt`).toString('utf8').includes('MIT License') && sha256(`public/vendor/${dir}/LICENSE.txt`).toString('hex') === t['LICENSE.txt SHA-256']);
+  expect(`vendor ${name}: the browser is told the same hash (Subresource Integrity in vendor.js) and the same path`, VENDOR[lib].integrity === `sha256-${sha256(`public/vendor/${dir}/${file}`).toString('base64')}` && VENDOR[lib].src === `/vendor/${dir}/${file}`);
+  expect(`vendor ${name}: it is a vendored asset, not a runtime dependency`, !pkg.dependencies?.[name] && !pkg.devDependencies?.[name]);
+}
+expect('vendor loader: outside a browser, or for an unknown library, it resolves to null and never throws', (await loadVendor('grid')) === null && (await loadVendor('nope')) === null);
 
 // 4. API security
 process.env.MOCK = '1';

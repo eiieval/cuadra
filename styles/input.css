@@ -182,6 +182,44 @@ a.badge:hover { background: rgba(255, 255, 255, .16); }
   .ledger tbody tr.row-empty td { display: table-cell; }
 }
 
+/* ---------- the ledger as an AG Grid (768px up): toolbar, cells, rows ---------- */
+.ledger-tools { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem .6rem; margin-top: .85rem; }
+.ledger-tools[hidden], .ledger-grid[hidden], #ledgerTable[hidden] { display: none; }
+.ledger-search { flex: 1 1 12rem; max-width: 17rem; padding: .35rem .8rem; border-radius: 999px; font-size: 12.5px; }
+.ledger-chips { display: flex; flex-wrap: wrap; gap: .35rem; }
+.chip[aria-pressed="true"] { border-color: color-mix(in srgb, var(--link) 65%, transparent); background: color-mix(in srgb, var(--link) 15%, transparent); color: var(--text); }
+.chip-count { margin-left: .2rem; font-family: var(--mono); font-size: 11px; color: var(--soft); font-variant-numeric: tabular-nums; }
+.chip[aria-pressed="true"] .chip-count { color: var(--text); }
+.ledger-grid { height: 420px; margin-top: .75rem; overflow: hidden; border-top: 1px solid var(--line); }
+
+.ledger-grid .ag-cell.g-cell { display: flex; align-items: center; }
+/* The grid wraps every cell's content in two elements that size to their content: let them shrink, so long names end in an ellipsis. */
+.ledger-grid .g-cell .ag-cell-wrapper { min-width: 0; max-width: 100%; }
+.ledger-grid .g-cell .ag-cell-value { min-width: 0; max-width: 100%; overflow: hidden; }
+.ledger-grid .ag-cell.g-money { justify-content: flex-end; font-size: 12.5px; }
+.g-number { font-size: 12.5px; }
+.g-client { display: flex; min-width: 0; flex-direction: column; line-height: 1.25; }
+.g-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.g-sub { font-size: 11px; color: var(--soft); }
+.g-status { display: flex; flex-wrap: wrap; align-items: center; gap: .15rem .4rem; line-height: 1.2; }
+.g-hash { font-size: 11px; color: var(--soft); }
+.g-due { font-size: 12px; color: var(--soft); }
+.g-actions-in { display: inline-flex; align-items: center; gap: .3rem; }
+.g-btn { min-height: 1.65rem; padding: .1rem .45rem; border-radius: .5rem; font-size: 12px; }
+.g-anul { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--soft); }
+.g-reason { color: var(--soft); }
+.g-total-label { font-weight: 600; }
+.g-note { font-size: 11px; font-weight: 400; color: var(--soft); }
+.g-norows { padding: 1rem; font-size: 13px; color: var(--soft); text-align: center; }
+.ledger-grid .ag-overlay, .ledger-grid .ag-overlay-panel, .ledger-grid .ag-overlay-wrapper { pointer-events: none; }
+.g-norows, .g-norows * { pointer-events: auto; }
+.g-header-quiet .ag-header-cell-text { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+.ledger-grid .ag-row.row-bad { background-color: color-mix(in srgb, var(--bad) 9%, var(--surface)); }
+.ledger-grid .ag-row.row-void, .ledger-grid .ag-row.row-anul { color: var(--soft); }
+.ledger-grid .ag-row.row-total { border-top: 1px solid rgba(255, 255, 255, .16); }
+/* The row that has just entered the chain lights up for 1.5 s (the same keyframes as the table row). */
+.ledger-grid .ag-row.row-flash { animation: row-flash 1.5s ease-out backwards; }
+
 /* ---------- the live chain: one block per record, linked, verified on sight ---------- */
 .chain-track { display: flex; align-items: center; margin: 0; padding: .55rem .15rem .75rem; overflow-x: auto; list-style: none; scroll-snap-type: x proximity; scroll-padding-inline: .5rem; scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, .18) transparent; }
 .chain-item { display: flex; flex: none; align-items: center; scroll-snap-align: end; }

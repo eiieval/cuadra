@@ -7,7 +7,7 @@
 // (ledger buttons, detail dialog, exports...). It borrows the Playwright of the sibling ops/video folder, like scripts/social-card.js.
 // Usage: node scripts/shots.js [outDir]
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
@@ -25,11 +25,16 @@ mkdirSync(OUT, { recursive: true });
 let failed = 0;
 const check = (label, ok) => { console.log(ok ? 'ok  ' : 'FAIL', label); if (!ok) failed++; };
 const issues = [];
-const watch = (page, label) => {
-  page.on('console', (m) => { if (m.type() === 'error') issues.push(`${label}: console error: ${m.text().slice(0, 160)}`); });
+const watch = (page, label, expected = []) => {
+  const expect_ = (text) => expected.some((re) => re.test(text));
+  page.on('console', (m) => { if (m.type() === 'error' && !expect_(m.text())) issues.push(`${label}: console error: ${m.text().slice(0, 160)}`); });
   page.on('pageerror', (e) => issues.push(`${label}: page error: ${String(e).slice(0, 160)}`));
   page.on('response', (r) => { if (r.status() >= 400) issues.push(`${label}: HTTP ${r.status()} ${r.url().slice(0, 100)}`); });
 };
+// The ledger is an AG Grid from 768px up (loaded after the first render) and the HTML table below that.
+const ROWS = (view) => (view.mobile ? '#rows .row' : '#ledgerGrid .ag-row:not(.ag-row-pinned)');
+const ROW_BAD = (view) => (view.mobile ? '#rows .row-bad' : '#ledgerGrid .row-bad');
+const gridReady = (page) => page.waitForSelector('#ledger[data-view="grid"] .ag-row', { timeout: 15000 });
 
 async function health() {
   try {
@@ -89,6 +94,8 @@ try {
     await ctx.addInitScript(() => localStorage.setItem('cuadra-tour-v1', '1'));
     const page = await ctx.newPage();
     watch(page, view.name);
+    let gridRequested = false;
+    page.on('request', (r) => { if (/\/vendor\/ag-grid\//.test(r.url())) gridRequested = true; });
     const shot = async (name, opts = {}) => { await page.screenshot({ path: `${OUT}/${name}-${view.name}.png`, ...opts }); };
     const openAgent = async () => { if (view.mobile) { await page.click('#openAgent'); await settle(page, 450); } };
     const closeAgent = async () => { if (view.mobile && (await page.evaluate(() => document.body.classList.contains('sheet-open')))) { await page.click('#sheetClose'); await settle(page, 350); } };
@@ -96,9 +103,46 @@ try {
     // 1. Dashboard: the sample quarter, a verified chain, the agent waiting.
     await page.goto(`${BASE}/`, { waitUntil: 'networkidle' });
     await settle(page, 1800);
+    if (!view.mobile) await gridReady(page);
     check(`[${view.name}] dashboard: chain verified with 8 blocks and no horizontal scroll`, (await page.locator('.chain-block[data-i]').count()) === 8 && /Chain verified/.test(await page.locator('#chainStatus').innerText()) && (await overflow(page)) <= 0);
     await shot('01-dashboard');
     await shot('01-dashboard-full', { fullPage: true });
+
+    // 1b. The ledger: an AG Grid from 768px up (a status filter and the totals row), the card table on a phone.
+    if (view.mobile) {
+      check(`[${view.name}] ledger: a phone keeps the card table and never downloads the grid`, !gridRequested && (await page.locator('#ledgerGrid').isHidden()) && (await page.locator('#ledgerTools').isHidden()) && (await page.locator('#rows .row').count()) === 8);
+      await page.evaluate(() => { document.querySelector('#openAgent').style.visibility = 'hidden'; });
+      await page.locator('#ledger').screenshot({ path: `${OUT}/08-ledger-cards-390.png` });
+      await page.evaluate(() => { document.querySelector('#openAgent').style.visibility = ''; });
+    } else {
+      const chips = (await page.locator('#ledgerChips .chip').allInnerTexts()).map((t) => t.replace(/\s+/g, ' ').trim()).join(' | ');
+      const sum = async () => (await page.locator('#ledgerGrid .ag-row-pinned').innerText()).replace(/\s+/g, ' ');
+      check('[1280] ledger: AG Grid with 8 rows (a cancellation among them), five status chips with counts and a totals row', (await page.locator(ROWS(view)).count()) === 8 && chips === 'All 7 | Open 3 | Overdue 2 | Paid 3 | Cancelled 1' && /Total · 6 invoices · 1 cancelled left out 4437,80 €/.test(await sum()) && (await page.locator('#ledgerGrid .row-anul').count()) === 1 && (await page.locator('#ledgerGrid .row-void').count()) >= 1);
+      const heights = await page.evaluate(() => [...document.querySelectorAll('#ledgerGrid .ag-row:not(.ag-row-pinned)')].map((r) => Math.round(r.getBoundingClientRect().height)));
+      const sideways = await page.evaluate(() => [...document.querySelectorAll('#ledgerGrid *')].filter((e) => e.scrollWidth > e.clientWidth + 1 && /auto|scroll/.test(getComputedStyle(e).overflowX)).length);
+      check('[1280] ledger: the cancellation row is shorter than an invoice row, and every column fits (no scroll inside the grid, none on the page)', Math.min(...heights) < Math.max(...heights) && sideways === 0 && (await overflow(page)) <= 0);
+      await page.evaluate(() => document.querySelector('#ledger').scrollIntoView({ block: 'start' }));
+      await settle(page, 500);
+      await shot('08-ledger-grid');
+      // The hash column shows 12 hex; the whole SHA-256 is in its tooltip.
+      const hashCell = page.locator('#ledgerGrid .ag-row:not(.ag-row-pinned) .ag-cell[col-id="hash"]').first();
+      await hashCell.hover();
+      await settle(page, 900);
+      const fullHash = await page.evaluate(() => JSON.parse(localStorage.getItem('cuadra-demo-v1')).records.at(-1).hash);
+      const tip = await page.evaluate(() => [...document.querySelectorAll('[class*="ag-tooltip"]')].map((e) => e.textContent.trim()).find(Boolean) || '');
+      check('[1280] ledger: the hash column shows 12 hex and its tooltip the full SHA-256', /^[0-9A-F]{12}$/.test((await hashCell.innerText()).trim()) && tip === fullHash);
+      await shot('08c-ledger-grid-hash-tooltip');
+      await page.mouse.move(5, 5);
+      await page.waitForFunction(() => ![...document.querySelectorAll('[class*="ag-tooltip"]')].some((e) => e.textContent.trim()), null, { timeout: 4000 }).catch(() => {});
+      await settle(page, 400);
+      // A status filter: Open is everything still to collect (overdue included). The totals row follows the filter.
+      await page.click('[data-chip="open"]');
+      await settle(page, 500);
+      check('[1280] ledger: the Open chip leaves the 3 invoices still to collect and the totals row adds them up (2006,40 €)', (await page.locator(ROWS(view)).count()) === 3 && /Total · 3 invoices 2006,40 €/.test(await sum()) && (await page.locator('[data-chip="open"]').getAttribute('aria-pressed')) === 'true' && /3 shown/.test(await page.locator('#ledgerCount').innerText()));
+      await shot('08b-ledger-grid-filter');
+      await page.click('[data-chip="all"]');
+      await settle(page, 300);
+    }
 
     // 2. Invoice proposal as a paper document, with the engine checks under it.
     await openAgent();
@@ -121,6 +165,7 @@ try {
     await page.click('[data-act="issue-send"]');
     await settle(page, 600);
     check(`[${view.name}] approving closes the sheet on a phone and the block enters the chain`, (await page.locator('.chain-block.is-new').count()) === 1 && (!view.mobile || !(await page.evaluate(() => document.body.classList.contains('sheet-open')))));
+    if (!view.mobile) check('[1280] approving lights the new row of the grid for a moment (row-flash) and the grid gains its row', (await page.locator('#ledgerGrid .row-flash').count()) === 1 && (await page.locator(ROWS(view)).count()) === 9);
     await shot('02b-approved-moment');
     await settle(page, 1500);
 
@@ -145,7 +190,7 @@ try {
     await page.evaluate(() => window.scrollTo(0, 0));
     await page.click('#tamper');
     await settle(page, 1900);
-    check(`[${view.name}] tamper: one broken block, the ones after it unverifiable, the ledger marks the record`, (await page.locator('.chain-block.broken').count()) === 1 && (await page.locator('.chain-block.unverifiable').count()) >= 1 && /Chain broken at/.test(await page.locator('#chainStatus').innerText()) && (await page.locator('#rows .row-bad').count()) === 1);
+    check(`[${view.name}] tamper: one broken block, the ones after it unverifiable, the ledger marks the record`, (await page.locator('.chain-block.broken').count()) === 1 && (await page.locator('.chain-block.unverifiable').count()) >= 1 && /Chain broken at/.test(await page.locator('#chainStatus').innerText()) && (await page.locator(ROW_BAD(view)).count()) === 1);
     await quiet(page);
     await shot('04-tamper');
 
@@ -163,7 +208,7 @@ try {
     await page.click('#tamper');
     await settle(page, 1700);
     check(`[${view.name}] undoing the tamper test heals the chain`, (await page.locator('.chain-block.broken').count()) === 0 && /Chain verified/.test(await page.locator('#chainStatus').innerText()));
-    await page.locator('#rows .row').first().locator('button[data-do="view"]').click();
+    await page.locator(ROWS(view)).first().locator('button[data-do="view"]').click();
     await settle(page, 700);
     const [good] = await Promise.all([ctx.waitForEvent('page'), page.click('[data-dl="print"]')]);
     watch(good, `${view.name} verify`);
@@ -215,6 +260,8 @@ try {
     await page.goto(`${BASE}/#selftest`, { waitUntil: 'networkidle' });
     await page.waitForFunction(() => document.body.dataset.selftest === 'done', null, { timeout: 60000 });
     await settle(page, 1800);
+    await gridReady(page);
+    check('#selftest: it runs with the grid active (9 rows: the sample, the invoice it issued) and no row is left marked as altered', (await page.locator('#ledger').getAttribute('data-view')) === 'grid' && (await page.locator(ROWS(VIEWS[0])).count()) === 9 && (await page.locator('#ledgerGrid .row-bad').count()) === 0);
     const events = await page.evaluate(() => [...new Set(JSON.parse(localStorage.getItem('cuadra-demo-v1')).activity.map((e) => e.event))]);
     const wanted = ['sample', 'proposal', 'approved', 'issued', 'sent', 'reminder', 'tamper_on', 'tamper_off'];
     check(`#selftest: the Activity log has every step of the flow (${wanted.join(', ')})`, wanted.every((e) => events.includes(e)));
@@ -234,19 +281,31 @@ try {
     page.on('dialog', (d) => d.accept());
     await page.goto(`${BASE}/`, { waitUntil: 'networkidle' });
     await settle(page, 1500);
-    const hotel = () => page.locator('#rows .row', { hasText: 'Hotel Mirador' });
+    await gridReady(page);
+    const ledgerRow = (text) => page.locator(ROWS(VIEWS[0]), { hasText: text });
+    const hotel = () => ledgerRow('Hotel Mirador');
+    // The grid's buttons are reachable by keyboard: arrows to the actions cell, Enter into it, Tab between buttons, Escape out.
+    await ledgerRow('Acme Studio SL').first().locator('.ag-cell[col-id="client"]').click({ position: { x: 20, y: 10 } });
+    for (let i = 0; i < 5; i++) await page.keyboard.press('ArrowRight');
+    await page.keyboard.press('Enter');
+    const focusedDo = () => page.evaluate(() => document.activeElement.dataset.do || document.activeElement.getAttribute('col-id'));
+    const keyFirst = await focusedDo();
+    await page.keyboard.press('Tab');
+    const keySecond = await focusedDo();
+    await page.keyboard.press('Escape');
+    check('flows: the grid is keyboard friendly (arrows reach the actions cell, Enter focuses View, Tab moves to Collect, Escape returns to the cell)', keyFirst === 'view' && keySecond === 'collect' && (await focusedDo()) === 'actions');
     await hotel().locator('[data-do="collect"]').click();
     await settle(page);
     check('flows: Collect in the ledger puts the invoice on PayPal (Remind and refresh appear)', (await hotel().locator('[data-do="remind"]').count()) === 1 && (await hotel().locator('[data-do="refresh"]').count()) === 1 && /PayPal/.test(await hotel().innerText()));
     await hotel().locator('[data-do="remind"]').click();
     await settle(page);
     check('flows: Remind reports through the toast and the Activity log', /Reminder sent/.test(await page.locator('#toast').innerText()) && /Reminder sent/.test(await page.locator('#activityList').innerText()));
-    await page.locator('#rows .row', { hasText: 'Marta Pardo' }).filter({ hasText: 'OVERDUE' }).locator('[data-do="view"]').click();
+    await ledgerRow('Marta Pardo').filter({ hasText: 'OVERDUE' }).locator('[data-do="view"]').click();
     await settle(page);
     await page.selectOption('#payMethod', 'CASH');
     await page.click('[data-dl="paid"]');
     await settle(page, 900);
-    check('flows: Mark paid in the detail records the payment', (await page.locator('#rows .row', { hasText: 'Marta Pardo' }).filter({ hasText: 'PAID' }).count()) >= 1 && /Payment recorded/.test(await page.locator('#activityList').innerText()));
+    check('flows: Mark paid in the detail records the payment', (await ledgerRow('Marta Pardo').filter({ hasText: 'PAID' }).count()) >= 1 && /Payment recorded/.test(await page.locator('#activityList').innerText()));
     const blocks = await page.locator('.chain-block[data-i]').count();
     await hotel().locator('[data-do="view"]').click();
     await settle(page);
@@ -256,6 +315,29 @@ try {
     check('flows: Cancel in the detail appends a cancellation block and the chain stays verified', (await page.locator('.chain-block[data-i]').count()) === blocks + 1 && /Chain verified/.test(await page.locator('#chainStatus').innerText()) && /Cancelled/.test(await page.locator('#activityList').innerText()));
     const exported = async (id) => { await page.click('#menuBtn'); const [d] = await Promise.all([page.waitForEvent('download'), page.click(id)]); return d.suggestedFilename(); };
     check('flows: the menu exports XML, CSV and the activity JSON', (await exported('#xml')) === 'cuadra-verifactu-records.xml' && (await exported('#csv')) === 'cuadra-libro-registro.csv' && (await exported('#exportActivity')) === 'cuadra-activity.json');
+    // The ledger's own Export CSV goes through the grid's API and writes the rows that are showing, in the register format.
+    await page.click('[data-chip="paid"]');
+    await page.fill('#ledgerSearch', 'acme');
+    await settle(page, 500);
+    check('flows: the status chip and the quick filter combine (Paid + "acme" leaves one row and its total)', (await page.locator(ROWS(VIEWS[0])).count()) === 1 && /Total · 1 invoice 1452,00 €/.test((await page.locator('#ledgerGrid .ag-row-pinned').innerText()).replace(/\s+/g, ' ')));
+    const [csvDownload] = await Promise.all([page.waitForEvent('download'), page.click('#ledgerCsv')]);
+    const csvLines = readFileSync(await csvDownload.path(), 'utf8').replace(/^\ufeff/, '').trim().split(/\r?\n/);
+    check('flows: Export CSV in the ledger toolbar writes only the rows showing, in the register format (header + 1 invoice, no totals row)', csvDownload.suggestedFilename() === 'cuadra-libro-registro.csv' && csvLines.length === 2 && csvLines[0] === '"record","number","date","client","client_nif","base","vat","total","status","due","hash"' && /^"alta","[A-Z0-9]+-0001","\d\d-\d\d-\d{4}","Acme Studio SL","B12345674","1200.00","252.00","1452.00","PAID"/.test(csvLines[1]));
+    await page.click('[data-chip="all"]');
+    await page.fill('#ledgerSearch', '');
+    await settle(page, 400);
+    const firstRow = () => page.locator(ROWS(VIEWS[0])).first().innerText();
+    const totalHeader = page.locator('#ledgerGrid .ag-header-cell[col-id="total"]');
+    await totalHeader.click();
+    await settle(page, 400);
+    const smallest = await firstRow();
+    await totalHeader.click();
+    await settle(page, 400);
+    const largest = await firstRow();
+    const lastKind = await page.locator(ROWS(VIEWS[0])).last().innerText();
+    await totalHeader.click();
+    await settle(page, 400);
+    check('flows: the Total header sorts the grid both ways, the cancellation record (no amount) always stays last, a third click restores the order', /290,40/.test(smallest) && /1452,00/.test(largest) && /Cancels/.test(lastKind) && /Cancels/.test(await firstRow()));
     const quarter = await page.locator('#vatQ').innerText();
     await page.click('#vatPrev');
     const moved = (await page.locator('#vatQ').innerText()) !== quarter;
@@ -271,6 +353,7 @@ try {
     check('flows: Discard dismisses the proposal and logs it', /Dismissed/.test(await page.locator('#activityList').innerText()));
     await page.reload({ waitUntil: 'networkidle' });
     await settle(page, 1500);
+    await gridReady(page);
     check('flows: a reload restores the ledger, the chat and the activity', (await page.locator('.chain-block[data-i]').count()) === blocks + 1 && (await page.locator('.proposal').count()) >= 1 && (await page.locator('#activityList .activity-row').count()) >= 5);
     await page.locator('[data-plan="pro"]').click();
     await page.waitForURL(/subscription=done/);
@@ -279,7 +362,12 @@ try {
     await page.click('#menuBtn');
     await page.click('#reset');
     await settle(page, 1200);
-    check('flows: Start empty shows the guided empty state and a ghost block, and keeps the activity log and the plan', (await page.locator('.empty-actions button').count()) === 2 && (await page.locator('.block-ghost').count()) === 1 && /Ledger reset/.test(await page.locator('#activityList').innerText()) && /Autónomo plan/i.test(await page.locator('#plan').innerText()));
+    check('flows: Start empty shows the guided empty state and a ghost block, and keeps the activity log and the plan', (await page.locator('.empty-actions button').count()) === 2 && (await page.locator('.block-ghost').count()) === 1 && /Ledger reset/.test(await page.locator('#activityList').innerText()) && /Autónomo plan/i.test(await page.locator('#plan').innerText()) && (await page.locator('#ledgerGrid').isHidden()));
+    await page.click('#menuBtn');
+    await page.click('#sample');
+    await gridReady(page);
+    await settle(page, 800);
+    check('flows: loading the sample again after Start empty brings the grid back with its 8 rows and its totals row', (await page.locator(ROWS(VIEWS[0])).count()) === 8 && (await page.locator('#ledgerGrid .ag-row-pinned').count()) === 1 && (await page.locator('#ledgerGrid').isVisible()) && (await page.locator('#ledgerTable').isHidden()));
     await ctx.close();
   }
 
@@ -319,6 +407,34 @@ try {
     await settle(still, 6500);
     check('reduced motion: the tour waits for Next instead of advancing, and Escape closes it', /Step 1 of 4/i.test(await still.locator('.tour-k').innerText()) && (await (async () => { await still.keyboard.press('Escape'); await settle(still, 300); return still.locator('#tour').isHidden(); })()));
     await calm.close();
+  }
+
+  // 10. The grid is an enhancement: if its file is blocked, too slow, rejected by the integrity check or throws, the
+  //     plain table stays with all its rows and nobody sees an error (the console shows only the browser's own network line).
+  {
+    const real = readFileSync(here('../public/vendor/ag-grid/ag-grid-community.min.noStyle.js'));
+    const cases = [
+      ['blocked', async (ctx) => { await ctx.route('**/vendor/ag-grid/**', (r) => r.abort()); }, [/Failed to load resource/, /ag-grid/]],
+      ['too slow (3 s limit)', async (ctx) => { await ctx.route('**/vendor/ag-grid/**', async (r) => { await new Promise((ok) => setTimeout(ok, 3600)); await r.continue().catch(() => {}); }); }, []],
+      ['tampered (integrity check)', async (ctx) => { await ctx.route('**/vendor/ag-grid/**', (r) => r.fulfill({ status: 200, contentType: 'text/javascript', body: Buffer.concat([real, Buffer.from('\n/* altered */')]) })); }, [/integrity/i, /ag-grid/]],
+      ['throws while building', async (ctx) => { await ctx.addInitScript(() => { window.agGrid = { createGrid() { throw new Error('boom'); } }; }); }, []],
+    ];
+    for (const [label, setup, expected] of cases) {
+      const ctx = await newContext({ ...VIEWS[0].opts });
+      await ctx.addInitScript(() => localStorage.setItem('cuadra-tour-v1', '1'));
+      await setup(ctx);
+      const page = await ctx.newPage();
+      watch(page, `grid fallback (${label})`, expected);
+      await page.goto(`${BASE}/`, { waitUntil: 'networkidle' });
+      await settle(page, label.startsWith('too slow') ? 5200 : 2200);
+      const view = await page.locator('#ledger').getAttribute('data-view');
+      check(`grid fallback, ${label}: the plain table stays with its 8 rows and the grid and its toolbar stay hidden`, view === 'table' && (await page.locator('#rows .row').count()) === 8 && (await page.locator('#ledgerGrid').isHidden()) && (await page.locator('#ledgerTools').isHidden()) && (await page.locator('#ledgerTable').isVisible()));
+      if (label === 'blocked') { await page.evaluate(() => document.querySelector('#ledger').scrollIntoView({ block: 'start' })); await settle(page, 300); await page.screenshot({ path: `${OUT}/09-ledger-fallback-table-1280.png` }); }
+      await page.locator('#rows .row', { hasText: 'Hotel Mirador' }).locator('[data-do="collect"]').click();
+      await settle(page, 700);
+      check(`grid fallback, ${label}: the table still works (Collect puts the invoice on PayPal) and the CSV export falls back to the register writer`, (await page.locator('#rows .row', { hasText: 'Hotel Mirador' }).locator('[data-do="remind"]').count()) === 1 && await (async () => { await page.click('#menuBtn'); const [d] = await Promise.all([page.waitForEvent('download'), page.click('#csv')]); const text = readFileSync(await d.path(), 'utf8'); return d.suggestedFilename() === 'cuadra-libro-registro.csv' && text.startsWith('﻿"record","number"') && text.trim().split(/\r?\n/).length === 9; })());
+      await ctx.close();
+    }
   }
 } finally {
   await browser.close();

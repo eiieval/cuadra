@@ -9,6 +9,8 @@ import { proposalPaperHtml } from '../public/js/proposal.js';
 import { reduceActivity, activityRows, activityHtml, relTime, MAX_ACTIVITY, EVENTS } from '../public/js/activity.js';
 import { encodeRecord, decodeRecord, sanitizeRecord, shareable, shareUrl, fragmentValue, verifyRecord, ShareError, MAX_FRAGMENT } from '../public/js/share.js';
 import { renderDocument } from '../public/js/document.js';
+import { summary } from '../public/js/ledger.js';
+import { ledgerRows, CHIPS, matchesChip, chipCounts, gridTotals, registerCsv, registerCells, REGISTER_HEADER, numberCellHtml, clientCellHtml, statusCellHtml, actionsCellHtml, csvCell, dueText } from '../public/js/grid.js';
 
 let failed = 0;
 const expect = (label, ok) => { console.log(ok ? 'ok  ' : 'FAIL', label); if (!ok) failed++; };
@@ -199,6 +201,43 @@ expect('the CSP gained no origin: fonts and styles still come only from Google F
   expect(`every plain class used in the markup has a rule in the stylesheet (${classes.size} classes)${missing.length ? `: missing ${missing.join(', ')}` : ''}`, missing.length === 0);
   const appCss = read('styles/input.css');
   expect('no component class is named like a Tailwind utility it would lose to (block, flex, hidden, grid...)', !/^\.(block|inline|flex|grid|hidden|table|contents|container|static|fixed|absolute|relative|sticky|truncate|collapse|invisible|visible)\s*[{,]/m.test(appCss));
+}
+
+// 8. The ledger as an AG Grid (B1): rows, status chips, totals of the filtered rows, register CSV and the cells' HTML.
+// None of this needs the library: the grid only draws what these pure functions decide.
+{
+  const today = '2026-10-06';
+  const rows = ledgerRows(sample, { today });
+  expect('grid rows: one per record, newest first, i is the index in the ledger', rows.length === 8 && rows[0].i === 7 && rows.at(-1).i === 0 && rows.every((r) => r.number === sample[r.i].number));
+  expect('grid rows: statuses come from the ledger (paid, overdue, cancelled, open) and the cancellation is its own row', rows.map((r) => r.status).join() === 'ISSUED,ANULACION,CANCELLED,OVERDUE,OVERDUE,PAID,PAID,PAID' && rows[1].kind === 'anulacion' && rows[1].number === sample[5].number && rows[1].reason === 'Duplicate of the previous invoice' && rows[1].total === '');
+  expect('grid rows: amounts and the register fields are the ledger strings, never recomputed', rows[0].total === sample[7].total && rows[0].base === '240.00' && rows[0].vat === '50.40' && rows[0].due === sample[7].dueDate && rows[0].hash === sample[7].hash && rows.every((r) => r.kind === 'anulacion' || (r.paypal === false && r.sample === true)));
+  expect('grid rows: the new record flashes and the altered one is marked', (() => { const r = ledgerRows(sample, { today, flashNumber: sample[7].number, brokenAt: 3 }); return r.filter((x) => x.flash).map((x) => x.i).join() === '7' && r.filter((x) => x.altered).map((x) => x.i).join() === '3'; })());
+
+  const counts = chipCounts(rows);
+  expect('status chips: All, Open, Overdue, Paid, Cancelled count invoices (overdue is also open, a cancellation is not an invoice)', CHIPS.map(([k]) => k).join() === 'all,open,overdue,paid,cancelled' && JSON.stringify(counts) === '{"all":7,"open":3,"overdue":2,"paid":3,"cancelled":1}');
+  const by = (chip) => rows.filter((r) => matchesChip(r, chip));
+  expect('status chips: a cancellation record shows under All and Cancelled only', by('all').length === 8 && by('cancelled').map((r) => r.kind).join() === 'anulacion,alta' && by('open').length === 3 && by('overdue').length === 2 && by('paid').length === 3 && !by('open').some((r) => r.kind === 'anulacion'));
+
+  const money2 = (list) => gridTotals(list).totalNum.toFixed(2);
+  const kpi = summary(sample, today);
+  expect('totals row: the sum of the rows showing agrees with the engine (open = outstanding, overdue, paid = collected)', money2(by('open')) === kpi.unpaidTotal && money2(by('overdue')) === kpi.overdueTotal && money2(by('paid')) === kpi.collected && kpi.unpaidTotal === '2006.40' && kpi.overdueTotal === '1716.00' && kpi.collected === '2431.40');
+  expect('totals row: All leaves the cancelled invoice out and says so', JSON.stringify(gridTotals(rows)) === '{"kind":"total","count":6,"totalNum":4437.8,"label":"Total · 6 invoices","note":"1 cancelled left out"}');
+  expect('totals row: labels follow the filter, a lone cancelled invoice is totalled instead of 0,00 and an empty filter is zero', gridTotals(by('open')).label === 'Total · 3 invoices' && gridTotals(by('overdue')).label === 'Total · 2 invoices' && JSON.stringify([gridTotals(by('cancelled')).label, gridTotals(by('cancelled')).totalNum, gridTotals(by('cancelled')).note]) === '["Cancelled · 1 invoice",726,""]' && gridTotals([]).label === 'Total · 0 invoices' && gridTotals([]).totalNum === 0 && gridTotals(by('paid').slice(0, 1)).label === 'Total · 1 invoice');
+  expect('totals row: cents are summed as integers (0.1 + 0.2 never shows 0,30000000000000004)', gridTotals([{ kind: 'alta', status: 'ISSUED', totalNum: 0.1 }, { kind: 'alta', status: 'ISSUED', totalNum: 0.2 }]).totalNum === 0.3);
+
+  const hostileClient = '<img src=x onerror=alert(1)>';
+  const open = rows[0];
+  expect('cells: client names are escaped and "sample" is shown under the NIF', !clientCellHtml({ ...open, client: hostileClient }).includes('<img') && clientCellHtml({ ...open, client: hostileClient }).includes('&lt;img') && /B12345674 · sample/.test(clientCellHtml(open)));
+  expect('cells: the status keeps the badge classes, the PayPal label and the ALTERED badge', statusCellHtml({ ...open, status: 'OVERDUE', paypal: true, altered: true }).includes('badge badge-bad') && statusCellHtml({ ...open, paypal: true }).includes('PayPal') && statusCellHtml({ ...open, altered: true }).includes('Altered') && !statusCellHtml(open).includes('Altered') && statusCellHtml(rows[1]).includes('Anulación'));
+  expect('cells: a cancellation row reads "↳ Cancels CU-0006" with its reason, escaped', numberCellHtml(rows[1]).includes('↳') && numberCellHtml(rows[1]).includes(`Cancels <b class="num">${sample[5].number}</b>`) && !numberCellHtml({ ...rows[1], reason: hostileClient }).includes('<img') && numberCellHtml(rows[2]).includes('line-through'));
+  const btn = (row) => [...actionsCellHtml(row).matchAll(/data-i="(\d+)" data-do="(\w+)"/g)].map((m) => `${m[2]}:${m[1]}`).join();
+  expect('cells: the buttons keep data-i and data-do (view, collect, remind, refresh), so the ledger listener serves table and grid', btn(open) === 'view:7,collect:7' && btn({ ...open, paypal: true }) === 'view:7,refresh:7,remind:7' && btn(rows.at(-1)) === 'view:0' && btn(rows[1]) === 'view:6' && actionsCellHtml(open).includes('aria-label="Collect ' + open.number + '"'));
+  expect('cells: the due date shows for open invoices only', dueText(open) === '18 Oct 2026' && dueText(rows.at(-1)) === '' && dueText(rows[1]) === '');
+
+  const csv = registerCsv([...rows].sort((a, b) => a.i - b.i));
+  const lines = csv.slice(1).split('\r\n');
+  expect('register CSV: BOM, the register header, one quoted line per record in ledger order', csv.startsWith('﻿') && lines[0] === REGISTER_HEADER.split(',').map(csvCell).join(',') && lines.length === 9 && lines[1].startsWith(`"alta","${sample[0].number}","${sample[0].date}","Acme Studio SL","B12345674","1200.00","252.00","1452.00","PAID"`) && lines[7].startsWith(`"anulacion","${sample[5].number}"`) && lines[7].includes('"CANCELLATION"'));
+  expect('register CSV: a cell that looks like a formula is neutralised, quotes are doubled', registerCsv([{ ...open, client: '=HYPERLINK("http://x","y")' }]).includes('"\'=HYPERLINK(""http://x"",""y"")"') && csvCell('+1') === '"\'+1"' && csvCell('@a') === '"\'@a"' && csvCell('-2') === '"\'-2"' && csvCell('ok') === '"ok"' && registerCells(rows[1]).length === 11);
 }
 
 console.log(failed ? `${failed} UI check(s) failed` : 'all UI checks passed');

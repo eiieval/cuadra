@@ -14,14 +14,15 @@ import { renderDocument } from './js/document.js';
 import { qrSvg } from './js/qr.js';
 import { sanitizeRecord, shareable, shareUrl, verifyRecord } from './js/share.js';
 import { startTour, tourSeen } from './js/tour.js';
+import { BADGE, OPEN, statusWord } from './js/status.js';
+import { CHIPS, chipCounts, createLedgerGrid, ledgerRows, registerCsv } from './js/grid.js';
+import { loadVendor } from './js/vendor.js';
 
 const $ = (s) => document.querySelector(s);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const KEY = 'cuadra-demo-v1';
-const BADGE = { PAID: 'badge badge-ok', MARKED_AS_PAID: 'badge badge-ok', OVERDUE: 'badge badge-bad', ERROR: 'badge badge-bad', CANCELLED: 'badge badge-mute', SENT: 'badge badge-warn', UNPAID: 'badge badge-warn', PARTIALLY_PAID: 'badge badge-warn' };
 const METHOD = { BANK_TRANSFER: 'bank transfer', CASH: 'cash', OTHER: 'other method' };
-const OPEN = (s) => s !== 'PAID' && s !== 'CANCELLED';
 const EXAMPLES = [
   'Invoice Acme Studio SL (B12345674) for 3 hours of consulting at €60',
   'Close my quarter',
@@ -446,12 +447,75 @@ function renderKpis() {
   $('#kpis').innerHTML = k.map(([l, v, sub]) => `<div class="panel kpi"><div class="label">${esc(l)}</div><div class="kpi-value num">${esc(v)}</div><div class="kpi-sub">${sub}</div></div>`).join('');
 }
 
-// The ledger. Below 640px each row is drawn as a card (see .ledger in styles/input.css), so every cell has a role class.
-function renderInvoices() {
+// The ledger: an AG Grid from 768px up (loaded after the first render, see loadGrid), the plain table below 768px, while the
+// grid loads, if it cannot load, and for the empty state. Below 640px each table row is drawn as a card (see .ledger in
+// styles/input.css), so every cell has a role class. Grid and table share the buttons' data-i / data-do and one click listener.
+const wideLedger = matchMedia('(min-width: 768px)');
+let gridCtl = null;
+let gridState = 'idle'; // idle -> loading -> ready | failed (a failed grid is never retried: the table stays)
+const ledgerCountText = () => {
   const invoices = invoicesOf(state.records).length;
   const cancels = state.records.length - invoices;
-  $('#ledgerCount').textContent = state.records.length ? `${invoices} invoice${invoices === 1 ? '' : 's'}${cancels ? ` · ${cancels} cancellation${cancels === 1 ? '' : 's'}` : ''}` : '';
+  return state.records.length ? `${invoices} invoice${invoices === 1 ? '' : 's'}${cancels ? ` · ${cancels} cancellation${cancels === 1 ? '' : 's'}` : ''}` : '';
+};
+const showLedger = (mode) => {
+  const grid = mode === 'grid';
+  $('#ledgerGrid').hidden = !grid;
+  $('#ledgerTools').hidden = !grid;
+  $('#ledgerTable').hidden = grid;
+  $('#ledger').dataset.view = mode;
+};
+const flashNumber = () => (flash && Date.now() - flash.at < FLASH_MS ? flash.number : '');
+const brokenIndex = () => (chainVerdict && !chainVerdict.ok ? chainVerdict.index : -1);
+
+function renderChips(counts) {
+  const box = $('#ledgerChips');
+  if (box.childElementCount !== CHIPS.length) {
+    box.innerHTML = CHIPS.map(([key, label]) => `<button type="button" class="chip" data-chip="${key}" aria-pressed="false">${esc(label)} <span class="chip-count"></span></button>`).join('');
+  }
+  box.querySelectorAll('[data-chip]').forEach((b) => {
+    b.setAttribute('aria-pressed', String(b.dataset.chip === (gridCtl?.chip || 'all')));
+    b.querySelector('.chip-count').textContent = counts[b.dataset.chip] ?? 0;
+  });
+}
+
+// Loads AG Grid after the first render (never blocking it) and swaps the table for it. Any failure leaves the table.
+function loadGrid() {
+  gridState = 'loading';
+  const go = async () => {
+    const ag = await loadVendor('grid', { timeout: 3000 });
+    if (!ag) { gridState = 'failed'; return; }
+    try {
+      showLedger('grid'); // the grid is measured when it is created, so it has to be on screen
+      gridCtl = createLedgerGrid($('#ledgerGrid'), ag, {
+        rows: ledgerRows(state.records, { today: today(), flashNumber: flashNumber(), brokenAt: brokenIndex() }),
+        reducedMotion: reducedMotion(),
+        onShown: (list) => { $('#ledgerCount').textContent = `${ledgerCountText()}${list.length !== state.records.length ? ` · ${list.length} shown` : ''}`; },
+      });
+      gridState = 'ready';
+    } catch {
+      try { gridCtl?.destroy(); } catch { /* nothing to clean */ }
+      gridCtl = null;
+      gridState = 'failed';
+    }
+    renderInvoices();
+  };
+  if ('requestIdleCallback' in window) requestIdleCallback(go, { timeout: 1500 }); else setTimeout(go, 50);
+}
+wideLedger.addEventListener('change', () => renderInvoices());
+
+function renderInvoices() {
+  $('#ledgerCount').textContent = ledgerCountText();
   ledgerVerdictKey = verdictKey(chainVerdict);
+  if (state.records.length && wideLedger.matches && gridState === 'idle') loadGrid();
+  if (state.records.length && wideLedger.matches && gridCtl) {
+    showLedger('grid');
+    const rows = ledgerRows(state.records, { today: today(), flashNumber: flashNumber(), brokenAt: brokenIndex() });
+    gridCtl.update(rows);
+    renderChips(chipCounts(rows));
+    return;
+  }
+  showLedger('table');
   if (!state.records.length) {
     $('#rows').innerHTML = `<tr class="row-empty"><td colspan="6"><div class="empty">
       <div class="empty-title">Your ledger is empty</div>
@@ -464,8 +528,8 @@ function renderInvoices() {
     </div></td></tr>`;
     return;
   }
-  const brokenAt = chainVerdict && !chainVerdict.ok ? chainVerdict.index : -1;
-  const lit = (number) => flash && flash.number === number && Date.now() - flash.at < FLASH_MS;
+  const brokenAt = brokenIndex();
+  const lit = (number) => flashNumber() === number;
   $('#rows').innerHTML = state.records.map((r, i) => ({ r, i })).reverse().map(({ r, i }) => {
     const mark = `${lit(r.number) ? ' row-flash' : ''}${i === brokenAt ? ' row-bad' : ''}`;
     const altered = i === brokenAt ? ' <span class="badge badge-bad" title="This record no longer matches its hash">Altered</span>' : '';
@@ -485,7 +549,7 @@ function renderInvoices() {
       <td class="c-num num whitespace-nowrap text-xs ${st === 'CANCELLED' ? 'line-through' : ''}" title="${esc(r.hash)}">${esc(r.number)}<span class="c-hash text-soft">${esc(r.hash.slice(0, 6))}</span></td>
       <td class="c-client">${esc(r.recipient?.name)}${r.sample ? ' <span class="text-[11px] text-soft">sample</span>' : ''}</td>
       <td class="c-total num whitespace-nowrap text-right">${eur(r.total)}</td>
-      <td class="c-status"><span class="${BADGE[st] || 'badge'}" title="${esc(r.paypal?.error || (r.paypal?.id ? 'On PayPal' : ''))}">${esc(st.replace(/_/g, ' '))}</span>${r.paypal?.id ? ' <span class="text-[11px] text-link">PayPal</span>' : ''}${altered}</td>
+      <td class="c-status"><span class="${BADGE[st] || 'badge'}" title="${esc(r.paypal?.error || (r.paypal?.id ? 'On PayPal' : ''))}">${esc(statusWord(st))}</span>${r.paypal?.id ? ' <span class="text-[11px] text-link">PayPal</span>' : ''}${altered}</td>
       <td class="c-due hidden whitespace-nowrap text-xs text-soft xl:table-cell">${r.dueDate && OPEN(st) ? esc(fmtDate(r.dueDate)) : ''}</td>
       <td class="c-actions space-x-1 whitespace-nowrap text-right"><button class="btn-ghost !min-h-8" data-i="${i}" data-do="view">View</button>${refresh}${action}</td>
     </tr>`;
@@ -728,10 +792,12 @@ $('#chat').addEventListener('click', async (ev) => {
   await run(mi, ai, b.dataset.act);
 });
 
-$('#rows').addEventListener('click', async (ev) => {
+// One listener for the buttons of the table (#rows) and of the grid (#ledgerGrid): both carry data-i and data-do.
+async function ledgerClick(ev) {
   const empty = ev.target.closest('[data-empty]');
   if (empty?.dataset.empty === 'sample') return loadSample();
   if (empty?.dataset.empty === 'invoice') return askAbout(EXAMPLES[0]);
+  if (ev.target.closest('[data-grid="clear"]')) return clearLedgerFilters();
   const b = ev.target.closest('button[data-i]');
   if (!b) return;
   const rec = state.records[Number(b.dataset.i)];
@@ -752,7 +818,33 @@ $('#rows').addEventListener('click', async (ev) => {
   }
   save();
   await renderAll();
+}
+$('#rows').addEventListener('click', ledgerClick);
+$('#ledgerGrid').addEventListener('click', ledgerClick);
+
+// Grid toolbar: quick filter, status chips, CSV of the rows that are showing.
+function clearLedgerFilters() {
+  $('#ledgerSearch').value = '';
+  gridCtl?.setQuick('');
+  gridCtl?.setChip('all');
+  if (gridCtl) renderChips(chipCounts(ledgerRows(state.records, { today: today() })));
+}
+let searchTimer;
+$('#ledgerSearch').addEventListener('input', (ev) => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => gridCtl?.setQuick(ev.target.value), 120);
 });
+$('#ledgerChips').addEventListener('click', (ev) => {
+  const b = ev.target.closest('[data-chip]');
+  if (!b || !gridCtl) return;
+  gridCtl.setChip(b.dataset.chip);
+  $('#ledgerChips').querySelectorAll('[data-chip]').forEach((c) => c.setAttribute('aria-pressed', String(c === b)));
+});
+const exportLedgerCsv = () => {
+  if (gridCtl && wideLedger.matches && state.records.length) return gridCtl.exportCsv('cuadra-libro-registro.csv');
+  download('cuadra-libro-registro.csv', registerCsv(ledgerRows(state.records, { today: today() }).sort((a, b) => a.i - b.i)), 'text/csv');
+};
+$('#ledgerCsv').onclick = exportLedgerCsv;
 
 $('#chainTrack').addEventListener('click', (ev) => {
   const b = ev.target.closest('button[data-i]');
@@ -794,16 +886,11 @@ async function setTamper(on) {
 }
 $('#tamper').onclick = () => setTamper(!tampered);
 
-const csvCell = (v) => { let s = String(v ?? ''); if (/^[=+\-@]/.test(s)) s = `'${s}`; return `"${s.replace(/"/g, '""')}"`; };
 $('#xml').onclick = () => download('cuadra-verifactu-records.xml', `<?xml version="1.0" encoding="UTF-8"?>\n<RegistrosFacturacion>\n${state.records.map(recordXml).join('\n')}\n</RegistrosFacturacion>\n`, 'application/xml');
 $('#exportActivity').onclick = () => download('cuadra-activity.json', `${JSON.stringify({ company: state.company, exportedAt: new Date().toISOString(), entries: state.activity }, null, 2)}\n`, 'application/json');
-$('#csv').onclick = () => {
-  const head = 'record,number,date,client,client_nif,base,vat,total,status,due,hash';
-  const rows = state.records.map((r) => (isAnulacion(r)
-    ? ['anulacion', r.number, r.date, '', '', '', '', '', 'CANCELLATION', '', r.hash]
-    : ['alta', r.number, r.date, r.recipient?.name, r.recipient?.nif, money(Number(r.total) - Number(r.taxTotal)), r.taxTotal, r.total, status(r), r.dueDate || '', r.hash]).map(csvCell).join(','));
-  download('cuadra-libro-registro.csv', [head, ...rows].join('\n'), 'text/csv');
-};
+// With the grid on screen the export goes through the grid's own API (it writes the rows you see, filter and sort
+// applied); otherwise the same register format is written from the records.
+$('#csv').onclick = exportLedgerCsv;
 
 // A new ledger replaces the records and the chat, but never the activity log (it is append-only) or the plan.
 function startOver() {
