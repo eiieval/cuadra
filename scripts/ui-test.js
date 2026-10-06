@@ -1,5 +1,8 @@
 // Offline tests for the client-side modules and the design system: no browser, no keys, no network.
 import { readFileSync, readdirSync } from 'node:fs';
+import { buildAlta, buildAnulacion, verifyChain } from '../public/js/verifactu.js';
+import { buildSample } from '../public/js/ledger.js';
+import { chainBlocks, chainStatus, chainTrackHtml, MAX_BLOCKS } from '../public/js/chain.js';
 
 let failed = 0;
 const expect = (label, ok) => { console.log(ok ? 'ok  ' : 'FAIL', label); if (!ok) failed++; };
@@ -29,6 +32,43 @@ const loose = clientFiles.flatMap((f) => [...read(f).matchAll(/#[0-9a-fA-F]{3,8}
 expect(`no loose hex colors in client code (${clientFiles.length} files)`, loose.length === 0);
 expect('Instrument Serif appears only in the .brand-line rule', (css.match(/Instrument Serif/g) || []).length === 1 && /\.brand-line\s*\{[^}]*Instrument Serif/.test(css));
 expect('reduced motion switches animations off', /prefers-reduced-motion: reduce\)[^}]*\{[^}]*animation: none !important/s.test(css));
+
+// 2. The live chain (A2): chainBlocks states for a healthy chain, a chain broken at i, and one with a cancellation
+const issuer = { name: 'Estudio Norte SL', nif: 'B76543214', series: 'UI' };
+const sample = await buildSample({ issuer, today: '2026-10-06' });
+const okVerdict = await verifyChain(sample);
+const healthy = chainBlocks(sample, okVerdict);
+expect('a healthy chain has one verified block per record', healthy.length === sample.length && healthy.every((b) => b.state === 'verified'));
+expect('blocks carry number, amount and the first 6 hex of the hash', healthy[0].kind === 'alta' && healthy[0].number === sample[0].number && healthy[0].amount === sample[0].total && healthy[0].hash6 === sample[0].hash.slice(0, 6) && /^[0-9A-F]{6}$/.test(healthy[0].hash6));
+const anul = healthy.find((b) => b.kind === 'anulacion');
+expect('a cancellation is its own block that names the invoice it cancels', healthy.filter((b) => b.kind === 'anulacion').length === 1 && anul.cancels === sample.find((r) => r.kind === 'anulacion').number && anul.amount === null);
+expect('every block is linked to the previous one, the first has no link', healthy[0].linkIn === null && healthy.slice(1).every((b) => b.linkIn === 'verified'));
+
+const forged = structuredClone(sample);
+forged[5].total = '826.00';
+const brokenVerdict = await verifyChain(forged);
+const split = chainBlocks(forged, brokenVerdict);
+expect('altering record i breaks block i and nothing before it', brokenVerdict.index === 5 && split.slice(0, 5).every((b) => b.state === 'verified') && split[5].state === 'broken');
+expect('every block after the broken one is unverifiable (grey), not verified', split.slice(6).length === 2 && split.slice(6).every((b) => b.state === 'unverifiable'));
+expect('the broken block explains itself: stored hash ≠ recomputed hash', split[5].tip === 'stored hash ≠ recomputed hash' && split[6].tip.includes(forged[5].number));
+expect('the link into the broken block holds, the one leaving it is snapped, later ones are unverifiable', split[5].linkIn === 'verified' && split[6].linkIn === 'broken' && split[7].linkIn === 'unverifiable');
+const stBad = chainStatus(forged, brokenVerdict);
+expect('the header names the broken record and the reason', stBad.tone === 'bad' && stBad.headline === `Chain broken at ${forged[5].number}` && stBad.detail === 'record altered after issue');
+const stOk = chainStatus(sample, okVerdict);
+expect('the header of a healthy chain counts the records', stOk.tone === 'ok' && stOk.headline === 'Chain verified' && stOk.detail === '8 records · SHA-256 linked' && chainStatus([], { ok: true, count: 0 }).tone === 'idle');
+expect('without a verdict no block is ever shown as verified', chainBlocks(sample, null).every((b) => b.state === 'pending') && chainStatus(sample, null).tone === 'warn');
+expect('records that just entered the chain are flagged new', chainBlocks(sample, okVerdict, { newFrom: 7 }).filter((b) => b.isNew).map((b) => b.index).join() === '7');
+
+const long = [];
+for (let i = 1; i <= 45; i++) long.push(await buildAlta({ issuer, invoice: { number: `L-${String(i).padStart(4, '0')}`, date: '2026-10-06', recipient: { name: 'Acme', nif: 'B12345674' }, lines: [{ description: 'Work', qty: 1, price: 10 + i, vat: 21 }] }, prev: long.at(-1) || null, generatedAt: '2026-10-06T10:00:00+02:00' }));
+const collapsed = chainBlocks(long, await verifyChain(long));
+expect(`with more than ${MAX_BLOCKS} records the oldest collapse into one "+N earlier" block`, collapsed.length === MAX_BLOCKS && collapsed[0].kind === 'collapsed' && collapsed[0].count === 45 - (MAX_BLOCKS - 1) && collapsed[1].index === 6 && collapsed.at(-1).index === 44 && chainBlocks(long.slice(0, 40), await verifyChain(long.slice(0, 40))).every((b) => b.kind === 'alta'));
+const longForged = structuredClone(long);
+longForged[2].total = '1.00';
+const hiddenBreak = chainBlocks(longForged, await verifyChain(longForged));
+expect('a break inside the collapsed block is shown on it, and the visible blocks become unverifiable', hiddenBreak[0].state === 'broken' && hiddenBreak.slice(1).every((b) => b.state === 'unverifiable'));
+const html = chainTrackHtml(chainBlocks([{ ...sample[0], number: '<img src=x onerror=alert(1)>' }], { ok: true, count: 1 }));
+expect('the strip escapes record text and shows a ghost block when empty', !html.includes('<img') && chainTrackHtml([]).includes('Your first record will appear here'));
 
 console.log(failed ? `${failed} UI check(s) failed` : 'all UI checks passed');
 process.exit(failed ? 1 : 0);

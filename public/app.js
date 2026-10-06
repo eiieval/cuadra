@@ -5,6 +5,7 @@ import {
 } from './js/ledger.js';
 
 import { esc, eur, fmtDate, isoToday, md, safeUrl } from './js/fmt.js';
+import { chainBlocks, chainStatus, chainTrackHtml, statusHtml } from './js/chain.js';
 
 const $ = (s) => document.querySelector(s);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -29,6 +30,11 @@ const fresh = () => ({
 });
 let tampered = null;
 let vatQ = null;
+let chainSig = '';
+let chainRun = 0;
+let chainFx = null; // { newFrom }: records at or after this index just entered the chain and animate in
+let chainNow = null;
+let statusTimer;
 let state = (() => { try { return JSON.parse(localStorage.getItem(KEY)); } catch { return null; } })();
 const firstVisit = !state;
 state = state || fresh();
@@ -124,6 +130,7 @@ async function issue(inv, withPaypal) {
   });
   Object.assign(rec, { email: inv.recipient.email, dueDate: addDays(today(), inv.dueDays) });
   state.records.push(rec);
+  chainFx = { newFrom: state.records.length - 1 };
   save();
   await renderAll();
   if (!withPaypal) return `Issued ${number}. VeriFactu record chained.`;
@@ -185,6 +192,7 @@ async function annul(rec, reason) {
     rec.paypal.status = r.status;
   }
   state.records.push(await buildAnulacion({ issuer: state.company, target: rec, prev: state.records.at(-1), reason }));
+  chainFx = { newFrom: state.records.length - 1 };
   return `${rec.number} cancelled with a chained VeriFactu cancellation record${rec.paypal?.id ? '; the PayPal invoice is cancelled too' : ''}.`;
 }
 
@@ -304,13 +312,44 @@ function renderVat() {
   $('#vatBody').innerHTML = vatTable(vatReturn(state.records, q));
 }
 
+// The chain strip. verifyChain() is async, so the blocks are drawn once the verdict is in (a few milliseconds) and
+// a 1.2 s sweep then re-checks them visually from left to right; the header says "Verifying" until it ends.
+const SWEEP_MS = 1200;
+const reducedMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+const chainSignature = () => `${state.records.length}|${state.records.at(-1)?.hash || ''}|${tampered ? tampered.i : ''}`;
+
 async function renderChain() {
+  const run = ++chainRun;
   const v = await verifyChain(state.records);
-  $('#chainStatus').innerHTML = !state.records.length
-    ? '<span class="text-soft">● Empty chain</span>'
-    : v.ok
-      ? `<span class="text-ok">● Chain verified</span> <span class="text-soft">· ${v.count} record${v.count === 1 ? '' : 's'} · SHA-256 linked</span>`
-      : `<span class="text-bad">● Chain broken at ${esc(state.records[v.index].number)}</span> <span class="text-soft">· ${esc(v.reason)}</span>`;
+  if (run !== chainRun) return; // a newer render superseded this one
+  const track = $('#chainTrack');
+  chainNow = chainStatus(state.records, v);
+  const sig = chainSignature();
+  if (sig !== chainSig) {
+    chainSig = sig;
+    const motion = !reducedMotion();
+    const left = track.scrollLeft;
+    track.innerHTML = chainTrackHtml(chainBlocks(state.records, v, { newFrom: chainFx?.newFrom ?? Infinity }));
+    chainFx = null;
+    track.classList.toggle('sweeping', motion);
+    const items = [...track.querySelectorAll('.block')];
+    items.forEach((el, i) => el.style.setProperty('--d', `${Math.round((i / Math.max(1, items.length - 1)) * (SWEEP_MS - 450))}ms`));
+    const broken = track.querySelector('.block.broken');
+    if (broken) broken.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'auto' });
+    else if (track.querySelector('.is-new')) track.scrollLeft = track.scrollWidth;
+    else track.scrollLeft = left;
+    clearTimeout(statusTimer);
+    if (motion && state.records.length) {
+      $('#chainStatus').innerHTML = statusHtml({ tone: 'warn', headline: 'Verifying chain…', detail: '' });
+      statusTimer = setTimeout(() => { $('#chainStatus').innerHTML = statusHtml(chainNow); }, SWEEP_MS);
+    } else {
+      $('#chainStatus').innerHTML = statusHtml(chainNow);
+    }
+  }
+  const t = $('#tamper');
+  t.textContent = tampered ? 'Undo tampering' : 'Tamper test';
+  t.setAttribute('aria-pressed', String(Boolean(tampered)));
+  t.disabled = !invoicesOf(state.records).length;
 }
 
 function renderPlan() {
@@ -476,6 +515,12 @@ $('#rows').addEventListener('click', async (ev) => {
   await renderAll();
 });
 
+$('#chainTrack').addEventListener('click', (ev) => {
+  const b = ev.target.closest('button[data-i]');
+  const rec = b && state.records[Number(b.dataset.i)];
+  if (rec) openDetail(rec);
+});
+
 $('#vatPrev').onclick = () => { vatQ = previousQuarter(vatQ || returnQuarter(today())); renderVat(); };
 $('#vatNext').onclick = () => {
   const [y, q] = (vatQ || returnQuarter(today())).split('-Q').map(Number);
@@ -499,7 +544,6 @@ $('#tamper').onclick = async () => {
     state.records[tampered.i].total = tampered.total;
     tampered = null;
   }
-  $('#tamper').textContent = tampered ? 'Undo tampering' : 'Tamper test';
   await renderAll();
 };
 
@@ -515,7 +559,6 @@ $('#csv').onclick = () => {
 
 async function loadSample() {
   tampered = null;
-  $('#tamper').textContent = 'Tamper test';
   state = fresh();
   state.records = await buildSample({ issuer: state.company, today: today() });
   vatQ = null;
@@ -530,7 +573,6 @@ $('#sample').onclick = async () => {
 $('#reset').onclick = async () => {
   if (!window.confirm('Delete all demo invoices and start with an empty ledger?')) return;
   tampered = null;
-  $('#tamper').textContent = 'Tamper test';
   state = fresh();
   save();
   await renderAll();

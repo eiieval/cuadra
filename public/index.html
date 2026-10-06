@@ -39,11 +39,14 @@
     </div>
   </header>
 
-  <section id="chainStrip" class="mx-auto max-w-7xl px-4 pb-4" aria-label="Hash chain">
-    <div class="panel flex flex-wrap items-center gap-3 px-4 py-3">
-      <h2 class="text-sm font-semibold">Hash chain</h2>
-      <div id="chainStatus" class="text-xs" aria-live="polite"></div>
-      <button id="tamper" class="btn-ghost ml-auto" title="Alter an issued amount and watch the chain break">Tamper test</button>
+  <section id="chainStrip" class="mx-auto max-w-7xl px-4 pb-4" aria-labelledby="chain-title">
+    <div class="panel px-4 pb-1 pt-3">
+      <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <h2 id="chain-title" class="text-sm font-semibold">Hash chain</h2>
+        <div id="chainStatus" class="order-last w-full text-xs sm:order-none sm:w-auto" aria-live="polite"></div>
+        <button id="tamper" class="btn-ghost ml-auto !min-h-8" aria-pressed="false" title="Alter an issued amount and watch the chain break">Tamper test</button>
+      </div>
+      <ol id="chainTrack" class="chain-track" aria-label="Records from oldest to newest. Select one for its details."></ol>
     </div>
   </section>
 
