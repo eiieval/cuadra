@@ -470,7 +470,7 @@ function renderInvoices() {
     const mark = `${lit(r.number) ? ' row-flash' : ''}${i === brokenAt ? ' row-bad' : ''}`;
     const altered = i === brokenAt ? ' <span class="badge badge-bad" title="This record no longer matches its hash">Altered</span>' : '';
     if (isAnulacion(r)) {
-      return `<tr class="row row-anul text-soft${mark}">
+      return `<tr class="row text-soft${mark}">
         <td class="c-num num whitespace-nowrap text-xs">↳ ${esc(r.number)}</td>
         <td class="c-client text-xs" colspan="2">Cancellation record${r.reason ? ` · ${esc(r.reason)}` : ''}</td>
         <td class="c-status"><span class="badge badge-mute">Anulación</span>${altered}</td><td class="c-due hidden xl:table-cell"></td>

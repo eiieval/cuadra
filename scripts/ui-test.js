@@ -185,5 +185,21 @@ const metas = (html) => ({ ogImage: /property="og:image" content="https:\/\/cuad
 expect('index.html and verify.html carry the OG and Twitter metas, the favicon and the touch icon', Object.values(metas(read('public/index.html'))).every(Boolean) && Object.values(metas(read('public/verify.html'))).every(Boolean));
 expect('the CSP gained no origin: fonts and styles still come only from Google Fonts', (() => { const csp = JSON.parse(read('vercel.json')).headers[0].headers.find((h) => h.key === 'Content-Security-Policy').value; return csp.includes("script-src 'self';") && csp.includes('style-src \'self\' \'unsafe-inline\' https://fonts.googleapis.com;') && csp.includes('font-src https://fonts.gstatic.com;') && csp.includes("img-src 'self' data:;") && csp.includes("connect-src 'self';") && !/https:\/\/(?!fonts\.g)/.test(csp); })());
 
+// 7. Markup and stylesheet agree: every plain class used in the HTML and the JS templates has a rule in public/styles.css
+{
+  const sheet = read('public/styles.css');
+  const files = ['public/index.html', 'public/verify.html', 'public/app.js', 'public/verify.js', ...readdirSync(new URL('../public/js', import.meta.url)).map((f) => `public/js/${f}`)];
+  const hooks = new Set(['tour-next', 'tour-skip', 'false', 'true']); // JS hooks without styles
+  const dynamic = /^(plan|activity|check)-$|^check-(ok|warn|bad)$/; // plan-${state}, activity-${actor}, check-${level}
+  const classes = new Set();
+  for (const f of files) {
+    for (const m of read(f).matchAll(/class(?:Name)?="([^"]*)"/g)) for (const t of m[1].replace(/\$\{[^}]*\}/g, ' ').split(/\s+/)) if (/^[a-z][a-z0-9-]*$/.test(t)) classes.add(t);
+  }
+  const missing = [...classes].filter((t) => !hooks.has(t) && !dynamic.test(t) && !new RegExp(`\\.${t}(?![\\w-])`).test(sheet));
+  expect(`every plain class used in the markup has a rule in the stylesheet (${classes.size} classes)${missing.length ? `: missing ${missing.join(', ')}` : ''}`, missing.length === 0);
+  const appCss = read('styles/input.css');
+  expect('no component class is named like a Tailwind utility it would lose to (block, flex, hidden, grid...)', !/^\.(block|inline|flex|grid|hidden|table|contents|container|static|fixed|absolute|relative|sticky|truncate|collapse|invisible|visible)\s*[{,]/m.test(appCss));
+}
+
 console.log(failed ? `${failed} UI check(s) failed` : 'all UI checks passed');
 process.exit(failed ? 1 : 0);
