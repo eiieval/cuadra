@@ -10,6 +10,9 @@ import { engineChecks, checksHtml } from './js/checks.js';
 import { proposalPaperHtml } from './js/proposal.js';
 import { isPlan, planProgress, planSummary, pendingLowRisk, hasHighRisk } from './js/plan.js';
 import { reduceActivity, activityRows, activityHtml } from './js/activity.js';
+import { renderDocument } from './js/document.js';
+import { qrSvg } from './js/qr.js';
+import { sanitizeRecord, shareable, shareUrl, verifyRecord } from './js/share.js';
 
 const $ = (s) => document.querySelector(s);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -556,14 +559,6 @@ async function renderAll() {
   await renderChain();
 }
 
-function qrSvg(text) {
-  if (typeof window.qrcode !== 'function') return '';
-  const q = window.qrcode(0, 'M');
-  q.addData(text);
-  q.make();
-  return q.createSvgTag({ cellSize: 4, margin: 2, scalable: true });
-}
-
 function download(name, text, type) {
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([text], { type }));
@@ -572,55 +567,82 @@ function download(name, text, type) {
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
 
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch { /* clipboard blocked: fall back to a temporary selection */ }
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.setAttribute('readonly', '');
+  ta.style.position = 'fixed';
+  ta.style.opacity = '0';
+  document.body.append(ta);
+  ta.select();
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch { ok = false; }
+  ta.remove();
+  return ok;
+}
+
 function chainFacts(r) {
   return `<div><div class="text-soft">Record hash (SHA-256)</div><div class="num break-all">${esc(r.hash)}</div></div>
     <div><div class="text-soft">Previous record</div><div class="num break-all">${r.prev ? esc(`${r.prev.number} · ${r.prev.hash}`) : 'First record in the chain'}</div></div>
     <div><div class="text-soft">Generated</div><div class="num">${esc(r.generatedAt)}</div></div>`;
 }
 
+// The detail of a record: the printable document, what the engine says about it, and what you can do with it.
 function openDetail(r) {
-  const xmlBlock = `<details><summary class="cursor-pointer text-fg/80">${isAnulacion(r) ? 'RegistroAnulacion' : 'RegistroAlta'} XML</summary><pre class="mt-2 max-h-56 overflow-auto whitespace-pre-wrap break-all rounded bg-ink p-2 text-[10px]">${esc(recordXml(r))}</pre></details>`;
-  const closeBtns = '<div class="flex flex-wrap gap-2"><button class="btn-ghost" data-dl="xml">Download XML</button><button class="btn-primary" data-dl="close">Close</button></div>';
-  if (isAnulacion(r)) {
-    $('#dlgBody').innerHTML = `<div class="max-w-xl space-y-3 text-xs"><div class="text-base font-semibold">Cancellation of ${esc(r.number)}</div>
-      <p class="text-soft">A RegistroAnulacion identifies the cancelled invoice and is chained like any other record. The original invoice stays in the ledger untouched.${r.reason ? ` Reason: ${esc(r.reason)}.` : ''}</p>${chainFacts(r)}${xmlBlock}${closeBtns}</div>`;
-  } else {
-    const st = status(r);
-    const rows = (r.lines || []).map((l) => `<tr class="border-t border-black/10"><td class="py-1 pr-2">${esc(l.description)}</td><td class="pr-2 text-right">${l.qty}</td><td class="pr-2 text-right">${eur(l.price)}</td><td class="text-right">${l.vat}%</td></tr>`).join('');
-    const pay = r.paypal?.id ? `${esc(r.paypal.status)}${safeUrl(r.paypal.payerUrl) ? ` · <a class="text-link underline" href="${esc(r.paypal.payerUrl)}" target="_blank" rel="noopener noreferrer">payer page</a>` : ''}` : r.paidAt ? `Paid by ${esc(METHOD[r.paidMethod] || 'transfer')} on ${esc(fmtDate(r.paidAt))}` : 'Not on PayPal';
-    const manage = OPEN(st) ? `<div class="space-y-2 rounded-lg border border-white/10 p-2"><div class="text-soft">Manage</div>
+  const anul = isAnulacion(r);
+  const st = anul ? '' : status(r);
+  const xmlBlock = `<details><summary class="cursor-pointer text-fg/80">${anul ? 'RegistroAnulacion' : 'RegistroAlta'} XML</summary><pre class="num mt-2 max-h-56 overflow-auto whitespace-pre-wrap break-all rounded bg-ink p-2 text-[11px]">${esc(recordXml(r))}</pre></details>`;
+  const buttons = `<div class="flex flex-wrap gap-2"><button class="btn-ghost" data-dl="link">Copy verification link</button><button class="btn-ghost" data-dl="print">Open printable</button><button class="btn-ghost" data-dl="xml">Download XML</button><button class="btn-primary" data-dl="close">Close</button></div>`;
+  const pay = r.paypal?.id ? `${esc(r.paypal.status)}${safeUrl(r.paypal.payerUrl) ? ` · <a class="link" href="${esc(r.paypal.payerUrl)}" target="_blank" rel="noopener noreferrer">payer page</a>` : ''}` : r.paidAt ? `Paid by ${esc(METHOD[r.paidMethod] || 'transfer')} on ${esc(fmtDate(r.paidAt))}` : 'Not on PayPal';
+  const manage = !anul && OPEN(st) ? `<div class="space-y-2 rounded-lg border border-line p-2"><div class="text-soft">Manage</div>
       <div class="flex flex-wrap gap-2"><select id="payMethod" class="field !w-auto !py-1 text-xs" aria-label="Payment method"><option value="BANK_TRANSFER">Bank transfer</option><option value="CASH">Cash</option><option value="OTHER">Other</option></select><button class="btn-ghost" data-dl="paid">Mark paid</button></div>
       <div class="flex flex-wrap gap-2"><input id="cancelReason" class="field !w-auto flex-1 !py-1 text-xs" maxlength="200" placeholder="Reason, e.g. duplicate" aria-label="Cancellation reason"><button class="btn-ghost btn-danger" data-dl="cancel">Cancel invoice</button></div></div>` : '';
-    $('#dlgBody').innerHTML = `
-    <div class="grid gap-5 md:grid-cols-[1fr_260px]">
-      <div class="rounded-xl bg-paper p-5 text-paper-ink">
-        <div class="flex justify-between gap-4">
-          <div><div class="text-lg font-bold">${esc(r.issuerName)}</div><div class="text-xs text-paper-soft">NIF ${esc(r.nif)}</div></div>
-          <div class="text-right"><div class="text-xs text-paper-soft">Invoice${st === 'CANCELLED' ? ' · CANCELLED' : ''}</div><div class="font-mono font-semibold">${esc(r.number)}</div><div class="text-xs text-paper-soft">${esc(r.date)}${r.dueDate ? ` · due ${esc(fmtDate(r.dueDate))}` : ''}</div></div>
-        </div>
-        <div class="mt-4 text-sm"><div class="text-xs text-paper-soft">Bill to</div><div class="font-medium">${esc(r.recipient?.name)}</div>${r.recipient?.nif ? `<div class="text-xs text-paper-soft">NIF ${esc(r.recipient.nif)}</div>` : ''}</div>
-        <table class="mt-4 w-full text-sm"><thead class="text-xs text-paper-soft"><tr><th class="text-left">Description</th><th class="text-right">Qty</th><th class="text-right">Price</th><th class="text-right">VAT</th></tr></thead><tbody>${rows}</tbody></table>
-        <div class="mt-3 space-y-0.5 text-right text-sm">${r.breakdown.map((b) => `<div class="text-paper-soft">Base ${b.rate}%: ${eur(b.base)} · VAT ${eur(b.tax)}</div>`).join('')}<div class="text-base font-bold">Total ${eur(r.total)}</div></div>
-        <div class="mt-4 flex items-end gap-3 border-t border-black/10 pt-3">
-          <div class="w-28 shrink-0">${qrSvg(r.qr)}<div class="text-center text-[10px] font-bold tracking-wider">VERI*FACTU</div></div>
-          <div class="break-all text-[10px] text-paper-soft">Invoice verifiable at the Spanish Tax Agency (AEAT test service).<br>${esc(r.qr)}</div>
-        </div>
-      </div>
-      <div class="min-w-0 space-y-3 text-xs">
-        <div><div class="text-soft">Status</div><span class="${BADGE[st] || 'badge'}">${esc(st.replace(/_/g, ' '))}</span></div>
-        ${chainFacts(r)}
-        <div><div class="text-soft">Payment</div><div>${pay}</div></div>
-        ${manage}${xmlBlock}${closeBtns}
-      </div>
-    </div>`;
-    const act = async (fnc) => { $('#dlg').close(); toast((await fnc()).text); save(); await renderAll(); };
-    $('#dlgBody').querySelector('[data-dl="paid"]')?.addEventListener('click', () => act(() => markPaid(r, $('#payMethod').value)));
-    $('#dlgBody').querySelector('[data-dl="cancel"]')?.addEventListener('click', () => {
-      if (window.confirm(`Cancel ${r.number}? A VeriFactu cancellation record will be added to the chain.`)) act(() => annul(r, $('#cancelReason').value.trim()));
-    });
-  }
-  $('#dlgBody').querySelector('[data-dl="xml"]').onclick = () => download(`${r.number}${isAnulacion(r) ? '-anulacion' : ''}.xml`, `<?xml version="1.0" encoding="UTF-8"?>\n${recordXml(r)}\n`, 'application/xml');
-  $('#dlgBody').querySelector('[data-dl="close"]').onclick = () => $('#dlg').close();
+  $('#dlgBody').innerHTML = `<div class="grid gap-5 lg:grid-cols-[minmax(0,1fr)_17.5rem]">
+    ${renderDocument(r, { qr: qrSvg, stamp: st === 'CANCELLED' ? 'Cancelled' : '' })}
+    <div class="min-w-0 space-y-3 text-xs">
+      <div id="dlgVerdict" class="verdict !px-3 !py-2 !text-xs" data-state="checking" role="status">Checking the record…</div>
+      ${anul ? '' : `<div><div class="text-soft">Status</div><span class="${BADGE[st] || 'badge'}">${esc(st.replace(/_/g, ' '))}</span></div><div><div class="text-soft">Payment</div><div>${pay}</div></div>`}
+      ${chainFacts(r)}
+      ${manage}${xmlBlock}${buttons}
+    </div>
+  </div>`;
+  const body = $('#dlgBody');
+  // The same check verify.html does, on this record: rebuild it from the shareable fields and re-hash it.
+  verifyRecord(sanitizeRecord(shareable(r))).then((v) => {
+    const el = body.querySelector('#dlgVerdict');
+    if (!el) return;
+    el.dataset.state = v.ok ? 'ok' : 'bad';
+    el.innerHTML = v.ok ? `<span class="verdict-mark" aria-hidden="true">✓</span> Matches its hash <span class="num">${esc(v.hash.slice(0, 8))}…</span>` : `<span class="verdict-mark" aria-hidden="true">✗</span> Altered: ${esc(v.reason)}`;
+    if (!v.ok) body.querySelector('.doc')?.insertAdjacentHTML('afterbegin', '<div class="doc-stamp" aria-hidden="true">Altered</div>');
+  }).catch(() => {
+    const el = body.querySelector('#dlgVerdict');
+    if (el) { el.dataset.state = 'bad'; el.textContent = 'This record could not be checked.'; }
+  });
+  const act = async (fnc) => { $('#dlg').close(); toast((await fnc()).text); save(); await renderAll(); };
+  body.querySelector('[data-dl="paid"]')?.addEventListener('click', () => act(() => markPaid(r, $('#payMethod').value)));
+  body.querySelector('[data-dl="cancel"]')?.addEventListener('click', () => {
+    if (window.confirm(`Cancel ${r.number}? A VeriFactu cancellation record will be added to the chain.`)) act(() => annul(r, $('#cancelReason').value.trim()));
+  });
+  body.querySelector('[data-dl="link"]').onclick = async () => {
+    try {
+      toast((await copyText(await shareUrl(r, location.origin))) ? 'Verification link copied. It opens a printable copy that re-checks the hash in the browser.' : 'Could not copy the link. Use "Open printable" and copy the address from that page.');
+    } catch { toast('This record is too large to share as a link.'); }
+  };
+  body.querySelector('[data-dl="print"]').onclick = async () => {
+    try {
+      const a = document.createElement('a');
+      a.href = await shareUrl(r, location.origin);
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      a.click();
+    } catch { toast('This record is too large to open as a printable page.'); }
+  };
+  body.querySelector('[data-dl="xml"]').onclick = () => download(`${r.number}${anul ? '-anulacion' : ''}.xml`, `<?xml version="1.0" encoding="UTF-8"?>\n${recordXml(r)}\n`, 'application/xml');
+  body.querySelector('[data-dl="close"]').onclick = () => $('#dlg').close();
   $('#dlg').showModal();
 }
 

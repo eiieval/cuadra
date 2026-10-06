@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cuadra · Verify an invoice record</title>
+  <meta name="description" content="A printable copy of an invoice issued with Cuadra. The record is re-hashed in your browser and checked against its SHA-256 hash; nothing is sent to a server.">
+  <meta name="robots" content="noindex">
+  <meta name="theme-color" content="#0a0d14">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/vendor/qrcode/qrcode.js"></script>
+</head>
+<body class="print-doc min-h-screen bg-ink text-fg">
+  <header class="no-print mx-auto flex max-w-3xl items-center gap-3 px-4 pb-2 pt-5">
+    <a href="/" class="flex items-center gap-3" aria-label="Cuadra home">
+      <img src="/favicon.svg" width="32" height="32" alt="">
+      <span class="text-lg font-bold">Cuadra</span>
+    </a>
+    <span class="hidden text-sm text-soft sm:inline">Invoice verification</span>
+    <a href="/" class="btn-ghost ml-auto whitespace-nowrap">Open Cuadra</a>
+  </header>
+
+  <main class="mx-auto max-w-3xl px-4 pb-10 pt-3">
+    <div id="verdict" class="verdict no-print" role="status" aria-live="polite" data-state="checking">Checking the record…</div>
+    <div class="no-print mt-3 flex flex-wrap items-center gap-2">
+      <button id="print" class="btn-primary" disabled>Print / Save as PDF</button>
+      <span class="text-xs text-soft">Use "Save as PDF" in the print dialog to keep a copy.</span>
+    </div>
+
+    <div id="paper" class="sheet mt-4" hidden></div>
+
+    <p class="no-print mt-4 text-xs leading-relaxed text-soft">Generated from the issuer's ledger copy. For legal effect, scan the AEAT QR. Nothing is sent to any server: the record travels in the part of the link after the <span class="num">#</span>, which browsers keep to themselves.</p>
+    <details class="no-print mt-3 text-xs leading-relaxed text-soft">
+      <summary class="cursor-pointer text-fg/80">What does this check?</summary>
+      <p class="mt-2">This page rebuilds the record from the link and recomputes its SHA-256 hash with the field order of the AEAT specification: issuer NIF, invoice number, date, invoice type, VAT total, total, hash of the previous record and generation time. It also recomputes the totals from the invoice lines and compares the link to the previous record. Client names and descriptions are not part of the VeriFactu hash, and the page cannot know whether the invoice was cancelled later: the AEAT QR code is what the tax agency checks.</p>
+    </details>
+  </main>
+  <script type="module" src="/verify.js"></script>
+</body>
+</html>

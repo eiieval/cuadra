@@ -7,6 +7,8 @@ import { engineChecks, checksHtml, matchClient } from '../public/js/checks.js';
 import { isPlan, planProgress, pendingLowRisk, hasHighRisk, planSummary, LOW_RISK } from '../public/js/plan.js';
 import { proposalPaperHtml } from '../public/js/proposal.js';
 import { reduceActivity, activityRows, activityHtml, relTime, MAX_ACTIVITY, EVENTS } from '../public/js/activity.js';
+import { encodeRecord, decodeRecord, sanitizeRecord, shareable, shareUrl, fragmentValue, verifyRecord, ShareError, MAX_FRAGMENT } from '../public/js/share.js';
+import { renderDocument } from '../public/js/document.js';
 
 let failed = 0;
 const expect = (label, ok) => { console.log(ok ? 'ok  ' : 'FAIL', label); if (!ok) failed++; };
@@ -122,6 +124,55 @@ expect('activity: the panel lists the newest first with relative times and reada
 expect('activity: relative times read naturally', relTime(new Date(t0).toISOString(), t0 + 10000) === 'just now' && relTime(new Date(t0).toISOString(), t0 + 2 * 3600000) === '2 h ago' && relTime(new Date(t0).toISOString(), t0 + 30 * 3600000) === 'yesterday' && relTime(new Date(t0).toISOString(), t0 + 5 * 86400000) === '5 d ago' && relTime(new Date(t0).toISOString(), t0 + 40 * 86400000) === '2026-10-06');
 expect('activity: every event of the flow has a label (proposal, approval, dismissal, issue, PayPal, reminder, payment, cancellation, sync, tamper, sample, reset)', ['proposal', 'approved', 'dismissed', 'issued', 'sent', 'reminder', 'payment', 'cancelled', 'sync', 'tamper_on', 'tamper_off', 'sample', 'reset'].every((e) => EVENTS[e]));
 expect('activity: rendered entries are escaped and name the actor for screen readers', !activityHtml(activityRows(reduceActivity([], { actor: 'you', event: 'approved', number: '<b>', detail: '<img src=x onerror=alert(1)>' }, t0), 20, t0)).includes('<img') && activityHtml(activityRows(a3, 20, t0)).includes('Engine: ') && activityHtml([]).includes('Nothing yet'));
+
+// 5. Document and verification link (A5): the record travels in a URL fragment and is re-hashed by the reader
+const issued = sample.find((r) => r.kind !== 'anulacion' && r.number === sample[0].number);
+const withPayPal = { ...issued, email: 'billing@acme.example', paypal: { id: 'INV2-MOCK-0001', token: 'SECRET-TOKEN', status: 'SENT', payerUrl: 'https://www.sandbox.paypal.com/invoice/p/#INV2-MOCK-0001' } };
+const packed = await encodeRecord(withPayPal);
+const unpacked = await decodeRecord(packed);
+expect('link: a record survives encode and decode (compressed)', packed.startsWith('z.') && JSON.stringify(unpacked) === JSON.stringify(sanitizeRecord(shareable(withPayPal))) && unpacked.number === issued.number && unpacked.hash === issued.hash && unpacked.lines.length === issued.lines.length);
+const plain = await encodeRecord(withPayPal, { compress: false });
+expect('link: the uncompressed fallback round-trips too', plain.startsWith('j.') && JSON.stringify(await decodeRecord(plain)) === JSON.stringify(unpacked) && packed.length < plain.length);
+expect('link: a decoded record verifies, with the hash it was issued with', (await verifyRecord(unpacked)).ok && (await verifyRecord(unpacked)).hash === issued.hash);
+expect('link: a cancellation record round-trips and verifies', await (async () => { const c = sample.find((r) => r.kind === 'anulacion'); const back = await decodeRecord(await encodeRecord(c)); return back.kind === 'anulacion' && back.reason === c.reason && (await verifyRecord(back)).ok; })());
+const forgedTotal = await decodeRecord(await encodeRecord({ ...issued, total: '999.00' }));
+const forgedLines = await decodeRecord(await encodeRecord({ ...issued, lines: issued.lines.map((l) => ({ ...l, price: l.price + 1 })) }));
+const forgedLink = await decodeRecord(await encodeRecord({ ...issued, prev: { nif: 'B76543214', number: 'X-1', date: '01-01-2026', hash: 'A'.repeat(64) } }));
+expect('link: an altered amount fails the hash ("Altered")', (await verifyRecord(forgedTotal)).ok === false && (await verifyRecord(forgedTotal)).reason === 'the content does not match its hash');
+expect('link: altered lines fail even though the hash fields are untouched', (await verifyRecord(forgedLines)).ok === false && /amounts do not match/.test((await verifyRecord(forgedLines)).reason) && (await verifyRecord(forgedLink)).ok === false);
+const jsonOf = JSON.stringify(shareable(withPayPal));
+expect('link: no PayPal token, no client email and no precomputed QR travel in the link', !jsonOf.includes('SECRET-TOKEN') && !jsonOf.includes('billing@acme.example') && !('qr' in shareable(withPayPal)) && shareable(withPayPal).payerUrl === withPayPal.paypal.payerUrl);
+expect('link: a payer link that is not PayPal is dropped', !('payerUrl' in shareable({ ...withPayPal, paypal: { payerUrl: 'https://evil.example/pay' } })) && !('payerUrl' in sanitizeRecord({ ...shareable(withPayPal), payerUrl: 'javascript:alert(1)' })));
+const rejects = async (value, code) => { try { await decodeRecord(value); return false; } catch (e) { return e instanceof ShareError && e.code === code; } };
+const rawLink = (obj) => `j.${Buffer.from(JSON.stringify(obj)).toString('base64url')}`;
+expect('link: empty, malformed and oversized values are rejected', await rejects('', 'empty') && await rejects('nonsense', 'malformed') && await rejects('z.@@@', 'malformed') && await rejects(`j.${'A'.repeat(MAX_FRAGMENT)}`, 'too-large') && await rejects(`z.${Buffer.from('not deflate').toString('base64url')}`, 'malformed'));
+expect('link: a small link that inflates into a huge payload is stopped (16 KB cap)', await (async () => { const { deflateRawSync } = await import('node:zlib'); const bomb = deflateRawSync(Buffer.alloc(5 * 1024 * 1024, 32)); return bomb.length < MAX_FRAGMENT && (await rejects(`z.${bomb.toString('base64url')}`, 'too-large')); })());
+expect('link: the record is rebuilt from known fields only, with strict types', await (async () => {
+  const good = shareable(issued);
+  const poisoned = await decodeRecord(`j.${Buffer.from(`${JSON.stringify({ ...good, extra: '<img src=x>', qr: 'https://evil.example/' }).slice(0, -1)},"__proto__":{"admin":true}}`).toString('base64url')}`);
+  return !('extra' in poisoned) && !('qr' in poisoned) && !('admin' in poisoned) && !Object.hasOwn(poisoned, '__proto__') && await rejects(rawLink({ ...good, hash: 'nothex' }), 'malformed') && await rejects(rawLink({ ...good, lines: 'x' }), 'malformed') && await rejects(rawLink({ ...good, lines: Array(21).fill(good.lines[0]) }), 'malformed') && await rejects(rawLink({ ...good, total: 217.8 }), 'malformed') && await rejects(rawLink({ ...good, lines: [{ ...good.lines[0], vat: 7 }] }), 'malformed') && await rejects(rawLink({ ...good, date: '2026-10-06' }), 'malformed') && await rejects(rawLink(null), 'malformed');
+})());
+expect('link: the fragment is read from location.hash', fragmentValue('#r=z.abc_-') === 'z.abc_-' && fragmentValue('') === '' && fragmentValue('#x=1') === '');
+expect('link: shareUrl points to verify.html with the record in the fragment, never in the query', (await shareUrl(withPayPal, 'https://cuadra-invoices.vercel.app')).startsWith('https://cuadra-invoices.vercel.app/verify.html#r=z.') && !(await shareUrl(withPayPal, 'https://x.example')).includes('?'));
+
+const qrCalls = [];
+const docHtml = renderDocument({ ...unpacked, qr: 'https://evil.example/fake-qr' }, { qr: (t) => { qrCalls.push(t); return `<svg data-text="${t.length}"></svg>`; } });
+expect('document: bilingual labels, issuer, client, lines, breakdown, total and the hash footer', ['Factura / Invoice', 'Cliente / Bill to', 'Descripción / Description', 'Base imponible / Taxable base', 'IVA / VAT', 'Total', 'Hash SHA-256', 'Registro anterior / Previous record', issued.number, issued.hash].every((t) => flat(docHtml).includes(t)));
+expect('document: two QR codes, the AEAT one rebuilt from the record and the PayPal one from a PayPal link only', qrCalls.length === 2 && qrCalls[0].startsWith('https://prewww2.aeat.es/') && qrCalls[0].includes(`numserie=${encodeURIComponent(issued.number)}`) && !qrCalls.some((t) => t.includes('evil.example')) && qrCalls[1] === withPayPal.paypal.payerUrl && docHtml.includes('Verify at AEAT') && docHtml.includes('Pay with PayPal'));
+const evilCalls = [];
+const evilDoc = renderDocument({ ...unpacked, payerUrl: 'https://evil.example/pay' }, { qr: (t) => { evilCalls.push(t); return ''; } });
+expect('document: no PayPal QR without a PayPal payer link', evilCalls.length === 1 && !evilDoc.includes('Pay with PayPal') && !evilDoc.includes('evil.example'));
+const hostileDoc = renderDocument({ ...unpacked, issuerName: hostile, number: hostile, recipient: { name: hostile, nif: hostile }, lines: [{ description: hostile, qty: 1, price: 1, vat: 21 }] }, { stamp: hostile, check: { ok: true, at: hostile } });
+expect('document: every field is escaped', !hostileDoc.includes('<img') && hostileDoc.includes('&lt;img'));
+const cancelDoc = renderDocument(sample.find((r) => r.kind === 'anulacion'), { qr: () => '' });
+expect('document: a cancellation record has its own document without an AEAT QR', cancelDoc.includes('Anulación / Cancellation record') && !cancelDoc.includes('Verify at AEAT'));
+expect('document: a stamp and the hash check line appear when asked', renderDocument(unpacked, { stamp: 'Altered', check: { ok: false, at: 'now' } }).includes('doc-stamp') && renderDocument(unpacked, { check: { ok: false } }).includes('DOES NOT MATCH') && !renderDocument(unpacked).includes('doc-stamp'));
+
+const verifyPage = read('public/verify.html');
+const verifyJs = read('public/verify.js');
+expect('verify page: never calls a server (no fetch, XHR, beacon or form)', !/fetch\(|XMLHttpRequest|sendBeacon|WebSocket|<form/.test(verifyJs + verifyPage + read('public/js/share.js') + read('public/js/document.js')));
+expect('verify page: print rules show only the document', /@media print[\s\S]*\.print-doc main > :not\(#paper\)\s*\{\s*display: none !important/.test(css) && verifyPage.includes('class="print-doc') && verifyPage.includes('id="paper"') && (verifyPage.match(/no-print/g) || []).length >= 4);
+expect('verify page: honest text and the Print button', verifyPage.includes("Generated from the issuer's ledger copy. For legal effect, scan the AEAT QR.") && verifyPage.includes('Print / Save as PDF') && /window\.print\(\)/.test(verifyJs));
 
 console.log(failed ? `${failed} UI check(s) failed` : 'all UI checks passed');
 process.exit(failed ? 1 : 0);

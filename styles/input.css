@@ -18,6 +18,9 @@
   --paper: #f7f6f1;   /* printed documents */
   --paper-ink: #151a26;
   --paper-soft: #566075;
+  --paper-line: rgba(21, 26, 38, .16);
+  --paper-ok: #0b7a52;  /* verified / altered, on paper */
+  --paper-bad: #b4233a;
   --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
   --ease: cubic-bezier(.22, .7, .25, 1);
 }
@@ -261,6 +264,80 @@ button.block:hover { transform: translateY(-2px); border-color: rgba(255, 255, 2
 .activity-detail { color: var(--soft); }
 .activity-when { flex: none; font-size: 11px; color: var(--soft); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .activity-empty { padding: .75rem 0; font-size: 12.5px; color: var(--soft); }
+
+/* ---------- the invoice document (detail dialog and verify.html) ---------- */
+.doc { position: relative; overflow: hidden; padding: 1.5rem 1.6rem 1.3rem; border-radius: .8rem; background: var(--paper); color: var(--paper-ink); font-size: 13px; line-height: 1.45; }
+.doc-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: .75rem 1.5rem; }
+.doc-name { font-size: 1.05rem; font-weight: 700; overflow-wrap: anywhere; }
+.doc-title { font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--paper-soft); }
+.doc-number { font-size: 1.15rem; font-weight: 600; }
+.doc-id { text-align: right; }
+.doc-meta { font-size: 12px; color: var(--paper-soft); overflow-wrap: anywhere; }
+.doc-label { font-size: 11px; font-weight: 500; letter-spacing: .06em; text-transform: uppercase; color: var(--paper-soft); }
+.doc-party { margin-top: 1.15rem; }
+.doc-scroll { margin-top: 1.1rem; overflow-x: auto; }
+.doc-lines { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.doc-lines th { padding: .3rem .5rem .35rem 0; text-align: left; font-size: 11px; font-weight: 600; color: var(--paper-soft); border-bottom: 1px solid var(--paper-line); white-space: nowrap; }
+.doc-lines td { padding: .4rem .5rem .4rem 0; vertical-align: top; border-bottom: 1px solid var(--paper-line); }
+.doc-lines th:last-child, .doc-lines td:last-child { padding-right: 0; }
+.doc-totals { width: min(100%, 22rem); margin: .8rem 0 0 auto; }
+.doc-row { display: flex; justify-content: space-between; gap: 1rem; padding: .1rem 0; color: var(--paper-soft); }
+.doc-total { margin-top: .3rem; padding-top: .4rem; border-top: 1px solid var(--paper-line); font-size: 1.05rem; font-weight: 700; color: var(--paper-ink); }
+.doc-foot { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 1rem 1.4rem; margin-top: 1.25rem; padding-top: 1rem; border-top: 1px solid var(--paper-line); }
+.doc-qr { width: 7.2rem; margin: 0; text-align: center; font-size: 11px; line-height: 1.3; }
+.doc-qr-img svg { display: block; width: 100%; height: auto; }
+.doc-qr-missing { padding: 2rem .5rem; border: 1px dashed var(--paper-line); color: var(--paper-soft); }
+.doc-note { min-width: 12rem; flex: 1; margin: 0; font-size: 11px; color: var(--paper-soft); }
+.doc-foot-text { display: grid; gap: .5rem; margin-top: 1.1rem; padding-top: .9rem; border-top: 1px solid var(--paper-line); }
+.doc-hash { font-size: 10px; line-height: 1.35; word-break: break-all; }
+.doc-check { font-size: 11px; font-weight: 600; }
+.doc-check.is-ok { color: var(--paper-ok); }
+.doc-check.is-bad { color: var(--paper-bad); }
+.doc-stamp { position: absolute; top: 34%; left: 50%; z-index: 1; padding: .2rem 1rem; border: 4px solid var(--paper-bad); border-radius: .5rem; color: var(--paper-bad); font-size: 2.4rem; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; opacity: .55; pointer-events: none; transform: translate(-50%, -50%) rotate(-12deg); }
+
+@media (max-width: 639px) {
+  .doc { padding: 1.1rem 1rem 1rem; }
+  .doc-id { text-align: left; }
+}
+/* On a phone the lines table becomes one block per line: description, then "qty × price · VAT" and the amount. */
+@media (max-width: 519px) {
+  .doc-scroll { overflow: visible; }
+  .doc-lines thead { display: none; }
+  .doc-lines, .doc-lines tbody { display: block; }
+  .doc-lines tr { display: flex; flex-wrap: wrap; align-items: baseline; gap: .1rem .35rem; padding: .5rem 0; border-bottom: 1px solid var(--paper-line); }
+  .doc-lines td { padding: 0; border: 0; text-align: left; }
+  .doc-lines td:first-child { flex: 1 1 100%; font-weight: 500; }
+  .doc-lines td:nth-child(2)::after { content: ' ×'; }
+  .doc-lines td:nth-child(4)::before { content: '· '; }
+  .doc-lines td:last-child { margin-left: auto; font-weight: 600; }
+}
+.doc-stamp ~ .doc-stamp { top: 58%; transform: translate(-50%, -50%) rotate(7deg); }
+
+.sheet { max-width: 794px; margin-inline: auto; box-shadow: 0 24px 60px rgba(0, 0, 0, .45); border-radius: .8rem; }
+.sheet .doc { min-height: 30rem; }
+.verdict { display: flex; align-items: center; gap: .6rem; padding: .8rem 1rem; border: 1px solid var(--line); border-radius: .8rem; background: var(--surface-2); font-size: .9rem; font-weight: 500; }
+.verdict-mark { display: inline-flex; width: 1.6rem; height: 1.6rem; flex: none; align-items: center; justify-content: center; border-radius: 999px; font-weight: 800; }
+.verdict[data-state="ok"] { border-color: color-mix(in srgb, var(--ok) 45%, transparent); background: color-mix(in srgb, var(--ok) 9%, var(--surface)); color: var(--ok); }
+.verdict[data-state="ok"] .verdict-mark { background: color-mix(in srgb, var(--ok) 20%, transparent); }
+.verdict[data-state="bad"] { border-color: color-mix(in srgb, var(--bad) 55%, transparent); background: color-mix(in srgb, var(--bad) 10%, var(--surface)); color: var(--bad); }
+.verdict[data-state="bad"] .verdict-mark { background: color-mix(in srgb, var(--bad) 20%, transparent); }
+.verdict[data-state="info"] { color: var(--soft); }
+
+/* Printing the verification page prints the document and nothing else. */
+@media print {
+  @page { size: A4; margin: 14mm; }
+  .print-doc, .print-doc body { background: #fff !important; }
+  html:has(.print-doc) { background: #fff !important; }
+  .print-doc .no-print { display: none !important; }
+  .print-doc > :not(main), .print-doc main > :not(#paper) { display: none !important; }
+  .print-doc main { max-width: none; margin: 0; padding: 0; }
+  .print-doc .sheet { max-width: none; margin: 0; box-shadow: none; border-radius: 0; }
+  .print-doc .doc { padding: 0; border-radius: 0; background: #fff; color: #000; font-size: 12px; }
+  .print-doc .doc-meta, .print-doc .doc-label, .print-doc .doc-title, .print-doc .doc-row, .print-doc .doc-note, .print-doc .doc-lines th { color: #333; }
+  .print-doc .doc-total { color: #000; }
+  .print-doc .doc-qr { width: 30mm; }
+  .print-doc .doc-lines, .print-doc .doc-foot, .print-doc .doc-foot-text { break-inside: avoid; }
+}
 
 /* ---------- toast and dialog ---------- */
 .toast { position: fixed; border-left: 3px solid var(--ok); left: 50%; bottom: 1rem; z-index: 70; width: min(92vw, 520px); transform: translateX(-50%); border-radius: .9rem; border: 1px solid rgba(255, 255, 255, .16); background: var(--surface-2); padding: .75rem 1rem; font-size: .875rem; box-shadow: 0 18px 50px rgba(0, 0, 0, .55); animation: toast-in .3s var(--ease); }
