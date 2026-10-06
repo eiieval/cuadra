@@ -159,10 +159,11 @@ async function issue(inv, withPaypal) {
   flash = { number, at: Date.now() };
   log('system', 'issued', number, `VeriFactu record chained · hash ${rec.hash.slice(0, 6)}…`);
   save();
+  closeSheet(); // on a phone the sheet gets out of the way, so the new block is seen entering the chain
+  $('#chainStrip').scrollIntoView({ behavior: reducedMotion() ? 'auto' : 'smooth', block: 'nearest' });
   await renderAll();
   const issued = (extra = '') => toast([bit(number, 'num font-semibold'), ' issued · hash ', bit(`${rec.hash.slice(0, 6)}…`), extra]);
   issued();
-  $('#chainStrip').scrollIntoView({ behavior: reducedMotion() ? 'auto' : 'smooth', block: 'nearest' });
   if (!withPaypal) return { ok: true, number, text: `Issued ${number}. VeriFactu record chained.` };
   const error = await collect(rec);
   if (error) log('paypal', 'paypal_error', number, error);
@@ -234,6 +235,8 @@ async function annul(rec, reason) {
   chainFx = { newFrom: state.records.length - 1 };
   flash = { number: rec.number, at: Date.now() };
   log('system', 'cancelled', rec.number, `RegistroAnulacion chained · hash ${record.hash.slice(0, 6)}…`);
+  closeSheet();
+  $('#chainStrip').scrollIntoView({ behavior: reducedMotion() ? 'auto' : 'smooth', block: 'nearest' });
   toast([bit(rec.number, 'num font-semibold'), ' cancelled · cancellation hash ', bit(`${record.hash.slice(0, 6)}…`)]);
   return { ok: true, text: `${rec.number} cancelled with a chained VeriFactu cancellation record${rec.paypal?.id ? '; the PayPal invoice is cancelled too' : ''}.` };
 }
@@ -565,6 +568,7 @@ async function renderAll() {
   renderVat();
   renderActivity();
   renderPlan();
+  updateFab();
   await renderChain();
 }
 
@@ -660,7 +664,8 @@ function openDetail(r) {
 // Puts a prompt in the agent's box and moves the focus there (the user reviews it and presses Send).
 function askAbout(text) {
   $('#msg').value = text;
-  $('#agent').scrollIntoView({ behavior: reducedMotion() ? 'auto' : 'smooth', block: 'nearest' });
+  if (wide.matches) $('#agent').scrollIntoView({ behavior: reducedMotion() ? 'auto' : 'smooth', block: 'nearest' });
+  else openSheet();
   $('#msg').focus({ preventScroll: true });
 }
 
@@ -676,7 +681,7 @@ async function ask(text) {
   pending.text = r.error ? `⚠ ${r.error}` : r.reply;
   pending.actions = r.error ? [] : (r.actions || []).slice(0, 10);
   if (state.chat.length > 60) state.chat = state.chat.slice(-60);
-  chatFocus = state.chat.indexOf(pending);
+  chatFocus = Math.max(0, state.chat.indexOf(pending) - 1); // the question and its answer, read from the top
   const n = pending.actions.length;
   if (n) log('agent', 'proposal', '', n > 1 ? `Plan · ${n} steps` : describe(pending.actions[0]));
   save();
@@ -710,6 +715,7 @@ $('#chat').addEventListener('click', async (ev) => {
   if (b.dataset.act === 'open-vat') {
     vatQ = b.dataset.q;
     renderVat();
+    closeSheet();
     $('#vat').scrollIntoView({ behavior: reducedMotion() ? 'auto' : 'smooth', block: 'center' });
     if (!a.done) await run(mi, ai, 'open-vat');
     return;
@@ -848,6 +854,49 @@ document.addEventListener('keydown', (ev) => {
   setMenu(false);
   menuBtn.focus();
 });
+
+// The agent as a sheet on small screens: a floating "Ask Cuadra" button opens it full screen, Escape or the close
+// button shuts it, and the rest of the page is inert while it is open. From 1024px up it is a normal column.
+const wide = matchMedia('(min-width: 1024px)');
+const sheetOpen = () => document.body.classList.contains('sheet-open');
+const BEHIND = ['header', '#chainStrip', '#rightCol', '#pricing', '#agents', 'footer'];
+let sheetFrom = null;
+function openSheet() {
+  if (wide.matches || sheetOpen()) return;
+  sheetFrom = document.activeElement;
+  document.body.classList.add('sheet-open');
+  const agent = $('#agent');
+  agent.setAttribute('role', 'dialog');
+  agent.setAttribute('aria-modal', 'true');
+  agent.tabIndex = -1;
+  BEHIND.forEach((q) => document.querySelectorAll(q).forEach((el) => { el.inert = true; }));
+  agent.focus({ preventScroll: true });
+}
+function closeSheet() {
+  if (!sheetOpen()) return;
+  document.body.classList.remove('sheet-open');
+  const agent = $('#agent');
+  ['role', 'aria-modal', 'tabindex'].forEach((a) => agent.removeAttribute(a));
+  BEHIND.forEach((q) => document.querySelectorAll(q).forEach((el) => { el.inert = false; }));
+  (sheetFrom?.isConnected ? sheetFrom : $('#openAgent')).focus?.({ preventScroll: true });
+  sheetFrom = null;
+}
+$('#openAgent').onclick = openSheet;
+$('#sheetClose').onclick = closeSheet;
+wide.addEventListener('change', () => { if (wide.matches) closeSheet(); });
+document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape' && sheetOpen() && !$('#dlg').open && menu.hidden) closeSheet(); });
+document.querySelector('a[href="#msg"]').addEventListener('click', (ev) => {
+  if (wide.matches) return;
+  ev.preventDefault();
+  openSheet();
+});
+// The button tells how many proposals are still waiting for a decision.
+function updateFab() {
+  const open = state.chat.flatMap((m) => m.actions || []).filter((a) => !a.done && a.type !== 'show_vat_return' && !isDeadEnd(a)).length;
+  const fab = $('#openAgent');
+  fab.dataset.pending = String(open);
+  fab.setAttribute('aria-label', open ? `Ask Cuadra, ${open} proposal${open === 1 ? '' : 's'} waiting for you` : 'Ask Cuadra');
+}
 
 // First-visit tour: four captions over the real page. The same tour opens from the "?" button and from ?tour=1.
 const isDesktop = () => matchMedia('(min-width: 1024px)').matches;

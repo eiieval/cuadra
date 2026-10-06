@@ -43,7 +43,7 @@
         <div class="relative">
           <button id="menuBtn" class="icon-btn" aria-haspopup="menu" aria-expanded="false" aria-controls="menu" aria-label="More actions" title="More actions">⋯</button>
           <div id="menu" class="menu" role="menu" aria-label="More actions" hidden>
-            <div id="menuCompany" class="menu-head md:hidden"></div>
+            <div id="menuCompany" class="menu-head lg:hidden"></div>
             <button id="sample" class="menu-item" role="menuitem">Load sample quarter</button>
             <button id="reset" class="menu-item" role="menuitem">Start empty</button>
             <div class="menu-sep" role="separator"></div>
@@ -75,12 +75,13 @@
           <div class="text-sm font-semibold leading-tight">Ask Cuadra</div>
           <div class="text-[11px] text-soft">proposes, you confirm</div>
         </div>
+        <button id="sheetClose" type="button" class="icon-btn ml-auto lg:hidden" aria-label="Close the agent" title="Close">✕</button>
       </div>
       <div id="chat" class="chat" aria-live="polite"></div>
       <div id="examples" class="chips"></div>
       <form id="ask" class="composer">
         <input id="msg" maxlength="500" autocomplete="off" aria-label="Message to the agent" placeholder="Describe the sale…" class="field flex-1">
-        <button type="button" id="mic" class="icon-btn hidden" aria-label="Speak your request" aria-pressed="false" title="Speak your request">🎙</button>
+        <button type="button" id="mic" class="icon-btn hidden" aria-label="Speak your request" aria-pressed="false" title="Speak your request"><svg viewBox="0 0 16 16" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5.5" y="1.8" width="5" height="8" rx="2.5"/><path d="M3.3 7.8a4.7 4.7 0 0 0 9.4 0M8 12.5v1.9"/></svg></button>
         <button class="btn-primary px-4">Send</button>
       </form>
     </aside>
@@ -179,6 +180,7 @@
     </div>
   </section>
 
+  <button id="openAgent" type="button" class="fab lg:hidden" aria-haspopup="dialog" aria-controls="agent"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 1.8l1.5 3.9 3.9 1.5-3.9 1.5L8 12.6 6.5 8.7 2.6 7.2l3.9-1.5z"/></svg><span>Ask Cuadra</span></button>
   <div id="tour" class="tour" role="region" aria-live="polite" aria-label="Quick tour" hidden></div>
   <div id="toast" role="status" aria-live="polite" class="toast hidden"></div>
   <dialog id="dlg" aria-label="Record detail"><div id="dlgBody"></div></dialog>
