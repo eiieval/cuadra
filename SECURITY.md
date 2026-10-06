@@ -15,6 +15,8 @@ Cuadra moves money and produces tax records, so it is designed around one rule: 
 | Cross-site requests and abuse | Same-origin check, JSON-only POST endpoints, per-IP rate limits, bounded request bodies. | 403, 415 and 429 tests |
 | Malicious scripts in the page | Strict Content-Security-Policy with `script-src 'self'`, no third-party scripts, Tailwind compiled at build time, QR library vendored with its integrity verified, `frame-ancestors 'none'`. | `vercel.json`, served by `dev-server.js` too |
 | Spreadsheet formula injection in exports | CSV cells starting with `=`, `+`, `-` or `@` are neutralised. | `public/app.js` |
+| A crafted verification link tries to inject HTML, a hostile URL or a decompression bomb | `verify.html` rebuilds the record from the URL fragment with strict types and sizes (16 KB, inflated size capped), escapes every field, rebuilds the AEAT QR from the hashed fields instead of trusting the link, and only encodes a payer link that is a PayPal URL. It never calls a server. | `scripts/ui-test.js`: "link:" and "document:" checks, including a 5 MB inflate bomb and a `__proto__` key |
+| A shared verification link leaks more than the document | Only a whitelist of the record's fields travels, in the fragment, which browsers never send to a server: no PayPal token, no client email. | `scripts/ui-test.js`: "no PayPal token, no client email and no precomputed QR travel in the link" |
 | An MCP client acting without the user | Tools are annotated read-only, idempotent or destructive (`cancel_invoice`), and the server instructs clients to draft before issuing. MCP clients ask the user to approve tool calls. | `scripts/mcp-test.js` checks the annotations |
 
 ## Data

@@ -19,7 +19,18 @@ Cuadra turns a sentence into a compliant invoice, collects it with PayPal, chase
 | **Declare** | "Prepare my VAT return" | Modelo 303 draft for the quarter that is due (boxes 01–09 and 27) with the days left to file, computed from the ledger, never by the model. |
 | **Delegate** | Any MCP client | Claude, ChatGPT, Cursor or your own agent can do all of the above through the Cuadra MCP server. |
 
-The app opens on a sample quarter (paid, overdue and open invoices plus one cancelled duplicate), so every feature can be tried in the first minute. The **Tamper test** button alters an issued amount and shows the chain breaking at that record.
+The app opens on a sample quarter (paid, overdue and open invoices plus one cancelled duplicate), so every feature can be tried in the first minute, and a four-step tour (the **?** button, or `?tour=1`) walks through it.
+
+## What you see
+
+The signature of the product is **the living chain**: the book that proves itself.
+
+- **The chain.** A strip of linked blocks, one per record (invoice or cancellation) with its number, amount and the first six hex of its hash. It is re-verified, with a short sweep from left to right, every time the ledger changes. **Tamper test** alters one issued amount in memory: that block turns red with a broken link ("stored hash ≠ recomputed hash"), every block after it turns grey ("not verifiable"), the ledger marks the record as altered, and undoing it heals the chain. A new invoice drops into the chain when you approve it, its ledger row lights up, and a toast gives the hash.
+- **Proposals as paper.** The agent answers with a small invoice document (issuer, client, lines, base, VAT, total, due date) and the buttons to issue it. Under it, **Engine checks**: client matched from the ledger or new, NIF checksum, VAT rate, totals, due date. They are computed in the browser from the proposal, never by the model.
+- **Plans.** A reply with two or more actions becomes a checklist ("Plan · 4 steps", "2 of 3 done"). Each step is approved on its own; only reminders and collections can be approved together, never invoices, payments or cancellations. **"Close my quarter"** (or "Cierra el trimestre") builds one: reminders for overdue invoices that are on PayPal, collections for the rest, and the VAT draft.
+- **Activity.** An append-only log of who did what (agent proposed, you approved, the engine issued, PayPal sent, you tampered), last 500 entries, exportable as JSON from the ⋯ menu.
+- **A document you can send.** The invoice document is bilingual ("Factura / Invoice") with two QR codes: Verify at AEAT and, when the invoice is on PayPal, Pay with PayPal. **Copy verification link** and **Open printable** open `verify.html`: the record travels in the URL fragment (never sent to a server), is re-hashed in the client's browser and shown as "✓ This document matches its hash" or "✗ Altered", ready to print or save as PDF.
+- **On a phone** the agent opens from a floating "Ask Cuadra" button as a full-screen sheet, the ledger rows become cards and the chain scrolls sideways.
 
 ## How it works
 
@@ -131,15 +142,20 @@ The server tells the client to draft before issuing and never to compute VAT fig
 - Same-origin checks, JSON-only endpoints, per-IP rate limits, bounded request bodies, generic user-facing errors and redacted server logs.
 - Model output is escaped before rendering; ledger data and chat history are passed to the model as data, never as instructions.
 - CSV exports are protected against formula injection.
+- Verification links carry only a whitelist of the record's fields (no PayPal token, no client email) in the URL fragment, which browsers never send. The page rebuilds the record with strict types and sizes (16 KB, inflate capped), recomputes the hash, rebuilds the AEAT QR from the hashed fields and encodes a payer link only if it is a PayPal URL. It makes no network request.
+- No new origins: the Content-Security-Policy is unchanged (`script-src 'self'`, fonts only from Google Fonts), and a test pins it.
 
 ## Run it
 
 ```bash
 cp .env.example .env    # GEMINI_API_KEY, PAYPAL_CLIENT_ID, PAYPAL_CLIENT_SECRET (Sandbox)
-npm test                # offline: engine, AEAT examples, ledger, API security, MCP end to end
+npm test                # offline: engine, AEAT examples, ledger, API security, MCP, chain, share links, activity, design tokens
 npm run dev             # http://localhost:3000
 MOCK=1 npm run dev      # no keys at all: deterministic agent and in-memory PayPal
 npm run paypal:setup    # once: creates the subscription plans, prints PAYPAL_PLAN_PRO / PAYPAL_PLAN_TEAM
+npm run build:css       # recompile public/styles.css after touching styles/ or the markup (needs network once)
+npm run shots           # screenshots at 1280 and 390 px plus visual and behaviour checks (MOCK=1, needs Playwright in ../ops/video)
+npm run social          # re-render public/og.png and public/icon-180.png from docs/og.html and favicon.svg
 npm run mcp             # the MCP server on stdio
 ```
 
@@ -150,9 +166,13 @@ No dependencies to install: Node 20 or later is enough.
 ```
 api/        agent.js · paypal.js · health.js       serverless functions
 lib/        agent, LLM client, PayPal client, validation, request guard
-public/     index.html · app.js · js/verifactu.js · js/ledger.js · vendored QR
+public/     index.html · verify.html · app.js · verify.js · vendored QR
+  js/       verifactu.js · ledger.js (engine) · chain.js · checks.js · plan.js · proposal.js · document.js · share.js
+            activity.js · tour.js · fmt.js · qr.js
+styles/     input.css (design tokens and components) → public/styles.css via Tailwind
+docs/       og.html (source of public/og.png)
 mcp/        server.js                                MCP server (stdio)
-scripts/    test.js · mcp-test.js · paypal-setup.js
+scripts/    test.js · ui-test.js · mcp-test.js · shots.js · social-card.js · paypal-setup.js
 ```
 
 ## Status

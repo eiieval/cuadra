@@ -780,6 +780,7 @@ async function setTamper(on) {
     tampered = null;
     log('you', 'tamper_off', rec.number, `Original total ${eur(rec.total)} restored`);
   }
+  save(); // a no-op while the amount is altered: a tampered ledger is never stored
   await renderAll();
   return true;
 }

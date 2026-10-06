@@ -10,7 +10,9 @@
     "mcp": "node mcp/server.js",
     "test": "node scripts/test.js && node scripts/ui-test.js && node scripts/mcp-test.js",
     "paypal:setup": "node scripts/paypal-setup.js",
-    "build:css": "npx -y tailwindcss@3 -c tailwind.config.cjs -i styles/input.css -o public/styles.css --minify"
+    "build:css": "npx -y tailwindcss@3 -c tailwind.config.cjs -i styles/input.css -o public/styles.css --minify",
+    "shots": "node scripts/shots.js",
+    "social": "node scripts/social-card.js"
   },
   "engines": {
     "node": ">=20"

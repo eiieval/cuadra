@@ -233,36 +233,37 @@ button.chain-block:hover { transform: translateY(-2px); border-color: rgba(255, 
 
 .proposal { overflow: hidden; border: 1px solid var(--line); border-radius: .85rem; box-shadow: 0 10px 28px rgba(0, 0, 0, .35); animation: rise .35s var(--ease) both; }
 @keyframes rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
-.proposal-actions { display: flex; flex-wrap: wrap; gap: .5rem; padding: .65rem .75rem; background: var(--surface-2); }
+.proposal-actions { display: flex; flex-wrap: wrap; gap: .4rem; padding: .55rem .7rem; background: var(--surface-2); }
 .proposal-actions .btn-primary { flex: 1 1 100%; }
 .proposal-actions .btn-ghost { flex: 1 1 0; }
+.proposal-actions .btn-primary, .proposal-actions .btn-ghost { min-height: 2.05rem; padding-block: .3rem; }
 .proposal-result { display: flex; align-items: center; justify-content: space-between; gap: .75rem; padding: .6rem .75rem; background: var(--surface-2); font-size: 12px; color: var(--ok); }
 .proposal-result.is-fail { color: var(--warn); }
 .proposal-result.is-skipped { color: var(--soft); }
 .proposal.is-done .paper { opacity: .72; }
-.paper { padding: .85rem .95rem .75rem; background: var(--paper); color: var(--paper-ink); font-size: 12.5px; line-height: 1.35; }
-.paper-top { display: flex; align-items: center; justify-content: space-between; gap: .5rem; margin-bottom: .6rem; }
+.paper { padding: .75rem .9rem .65rem; background: var(--paper); color: var(--paper-ink); font-size: 12.5px; line-height: 1.35; }
+.paper-top { display: flex; align-items: center; justify-content: space-between; gap: .5rem; margin-bottom: .45rem; }
 .paper-kind { font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
 .paper-chip { padding: .05rem .5rem; border: 1px dashed color-mix(in srgb, var(--paper-ink) 38%, transparent); border-radius: 999px; font-size: 11px; font-weight: 600; color: var(--paper-soft); white-space: nowrap; }
-.paper-parties { display: grid; grid-template-columns: 1fr 1fr; gap: .75rem; padding-bottom: .6rem; border-bottom: 1px solid color-mix(in srgb, var(--paper-ink) 14%, transparent); }
+.paper-parties { display: grid; grid-template-columns: 1fr 1fr; gap: .75rem; padding-bottom: .5rem; border-bottom: 1px solid color-mix(in srgb, var(--paper-ink) 14%, transparent); }
 .paper-parties > div { min-width: 0; overflow-wrap: anywhere; }
 .paper-label { font-size: 11px; font-weight: 500; letter-spacing: .06em; text-transform: uppercase; color: var(--paper-soft); }
 .paper-strong { font-weight: 600; }
 .paper-soft { color: var(--paper-soft); }
 .paper-email { font-size: 12px; }
-.paper-lines { width: 100%; margin-top: .45rem; border-collapse: collapse; }
+.paper-lines { width: 100%; margin-top: .35rem; border-collapse: collapse; }
 .paper-lines td { padding: .2rem 0; vertical-align: top; }
 .paper-lines td:nth-child(2) { padding: .2rem .55rem; color: var(--paper-soft); text-align: right; white-space: nowrap; }
 .paper-lines td:last-child { text-align: right; white-space: nowrap; }
-.paper-sum { margin-top: .4rem; padding-top: .4rem; border-top: 1px solid color-mix(in srgb, var(--paper-ink) 14%, transparent); }
+.paper-sum { margin-top: .3rem; padding-top: .3rem; border-top: 1px solid color-mix(in srgb, var(--paper-ink) 14%, transparent); }
 .paper-row { display: flex; justify-content: space-between; gap: .5rem; }
 .paper-total { margin-top: .2rem; font-size: 14px; font-weight: 700; }
-.paper-due { margin-top: .5rem; font-size: 12px; color: var(--paper-soft); }
+.paper-due { margin-top: .35rem; font-size: 12px; color: var(--paper-soft); }
 
-.checks { margin-top: .55rem; padding: .6rem .75rem; border: 1px solid var(--line); border-radius: .8rem; background: color-mix(in srgb, var(--surface-2) 60%, transparent); }
+.checks { margin-top: .45rem; padding: .5rem .7rem; border: 1px solid var(--line); border-radius: .8rem; background: color-mix(in srgb, var(--surface-2) 60%, transparent); }
 .checks-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: .1rem .75rem; margin-bottom: .35rem; }
 .checks ul { margin: 0; padding: 0; list-style: none; }
-.check { display: flex; align-items: flex-start; gap: .5rem; padding: .12rem 0; font-size: 12px; line-height: 1.4; color: var(--text); }
+.check { display: flex; align-items: flex-start; gap: .5rem; padding: .08rem 0; font-size: 12px; line-height: 1.4; color: var(--text); }
 .check-mark { width: .9rem; height: .9rem; flex: none; margin-top: .12rem; }
 .check-info { color: var(--soft); }
 
