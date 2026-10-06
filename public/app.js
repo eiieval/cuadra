@@ -420,7 +420,7 @@ function renderChat() {
       if (m.role === 'user') return `<div class="bubble-user">${esc(m.text)}</div>`;
       const acts = m.actions || [];
       const body = isPlan(acts) ? planCard(m, mi) : acts.map((a, ai) => actionCard(a, mi, ai)).join('');
-      return `<div class="space-y-2"><div class="bubble-agent${m.text === 'Thinking…' ? ' thinking' : ''}">${md(m.text)}</div>${body}</div>`;
+      return `<div class="space-y-2"><div class="bubble-agent${m.text === 'Thinking…' ? ' thinking' : ''}">${m.text === 'Thinking…' ? 'Thinking' : md(m.text)}</div>${body}</div>`;
     }).join('')
     : introHtml();
   $('#examples').hidden = !state.chat.length;

@@ -331,7 +331,7 @@ button.chain-block:hover { transform: translateY(-2px); border-color: rgba(255, 
 .doc-qr-missing { padding: 2rem .5rem; border: 1px dashed var(--paper-line); color: var(--paper-soft); }
 .doc-note { min-width: 12rem; flex: 1; margin: 0; font-size: 11px; color: var(--paper-soft); }
 .doc-foot-text { display: grid; gap: .5rem; margin-top: 1.1rem; padding-top: .9rem; border-top: 1px solid var(--paper-line); }
-.doc-hash { font-size: 10px; line-height: 1.35; word-break: break-all; }
+.doc-hash { font-size: 11px; line-height: 1.35; word-break: break-all; }
 .doc-check { font-size: 11px; font-weight: 600; }
 .doc-check.is-ok { color: var(--paper-ok); }
 .doc-check.is-bad { color: var(--paper-bad); }
@@ -396,6 +396,18 @@ button.chain-block:hover { transform: translateY(-2px); border-color: rgba(255, 
 body.touring { padding-bottom: 9rem; }
 @media (max-width: 1023px) { .tour { bottom: 5.25rem; } }
 @media (min-width: 1024px) { .tour { left: 50%; right: auto; width: 30rem; margin: 0; transform: translateX(-50%); animation-name: toast-in; } }
+
+/* Printing the app itself never gives a wall of dark panels: an open record prints as its document, anything else
+   prints a pointer to "Open printable". */
+@media print {
+  body:not(.print-doc) { background: #fff !important; color: #000 !important; }
+  body:not(.print-doc) > :not(dialog[open]) { display: none !important; }
+  body:not(.print-doc):not(:has(dialog[open]))::before { content: 'To print an invoice, open it in Cuadra and choose "Open printable".'; display: block; padding: 2rem; color: #000; font: 14px/1.5 Inter, system-ui, sans-serif; }
+  body:not(.print-doc) dialog[open] { position: static; display: block; width: auto; max-height: none; margin: 0; padding: 0; overflow: visible; border: 0; background: #fff; color: #000; }
+  body:not(.print-doc) dialog[open] #dlgBody > div { display: block; }
+  body:not(.print-doc) dialog[open] #dlgBody > div > :not(.doc) { display: none !important; }
+  body:not(.print-doc) dialog[open] .doc { padding: 0; border-radius: 0; background: #fff; color: #000; }
+}
 
 /* ---------- toast and dialog ---------- */
 .toast { position: fixed; border-left: 3px solid var(--ok); left: 50%; bottom: 1rem; z-index: 70; width: min(92vw, 520px); transform: translateX(-50%); border-radius: .9rem; border: 1px solid rgba(255, 255, 255, .16); background: var(--surface-2); padding: .75rem 1rem; font-size: .875rem; box-shadow: 0 18px 50px rgba(0, 0, 0, .55); animation: toast-in .3s var(--ease); }
