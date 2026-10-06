@@ -12,7 +12,9 @@ import { renderDocument } from '../public/js/document.js';
 import { summary, vatReturn } from '../public/js/ledger.js';
 import { cleanSpec, defaultBoard, specKey, widgetData, widgetCsv, widgetTableHtml, periodRange, countText, subtitle, MAX_WIDGETS, TYPES, METRICS, GROUPS } from '../public/js/widgets.js';
 import { chartOptions, createChartHub, insightCardHtml, boardCardHtml, widgetBodyHtml, legendRows, legendHtml, mix as mixHex, palette, figures, chartLabel } from '../public/js/insights.js';
-import { eur } from '../public/js/fmt.js';
+import { eur, md } from '../public/js/fmt.js';
+import { synthReply, detectLang } from '../public/js/say.js';
+import { normalizeProposal } from '../public/js/proposal.js';
 import { ledgerRows, CHIPS, matchesChip, chipCounts, gridTotals, registerCsv, registerCells, REGISTER_HEADER, numberCellHtml, clientCellHtml, statusCellHtml, actionsCellHtml, csvCell, dueText } from '../public/js/grid.js';
 
 let failed = 0;
@@ -323,6 +325,29 @@ expect('the CSP gained no origin: fonts and styles still come only from Google F
   const stuck = slot();
   expect('chart hub: if the library throws, the table that is already in the card stays and nothing is thrown', createChartHub(brokenAg, { tokens, fmt: eur }).mount(stuck, 'k', owes) === false && stuck.childNodes[0] === 'fallback table');
   delete globalThis.document;
+}
+
+// 10. The agent's own sentence (B3): when the model answers with proposals and no text, the browser writes it from the
+// proposals and the ledger, so every figure in it is the engine's.
+{
+  const today = '2026-10-06';
+  const said = (actions, lang = 'en') => flat(synthReply(actions, { records: sample, today, lang }));
+  const acme = { type: 'propose_invoice', args: { recipient: { name: 'Acme Studio SL', nif: 'B12345674', email: 'billing@acme.example' }, lines: [{ description: 'Consulting', qty: 3, price: 60, vat: 21 }] } };
+  const plan = [{ type: 'propose_reminder', args: { number: sample[3].number } }, { type: 'propose_collect', args: { number: sample[4].number } }, { type: 'propose_collect', args: { number: sample[7].number } }, { type: 'show_vat_return', args: {} }];
+  const owesSpec = { type: 'propose_widget', args: { title: 'Who still owes what', type: 'donut', metric: 'outstanding', groupBy: 'client', period: 'all' } };
+  expect('say: an invoice draft names the client, the engine total and the line ("Invoice draft for Acme Studio SL: 217,80 € (3 × 60,00 € + VAT)")', said([acme]) === 'Invoice draft for Acme Studio SL: 217,80 € (3 × 60,00 € + VAT)');
+  expect('say: a plan counts its steps ("Plan to close the quarter: 1 reminder, 2 collections with PayPal and your VAT draft.")', said(plan) === 'Plan to close the quarter: 1 reminder, 2 collections with PayPal and your VAT draft.');
+  expect('say: who owes you money comes from widgetData ("Here is who owes you money: 3 open invoices, 2006,40 €")', said([owesSpec]) === 'Here is who owes you money: 3 open invoices, 2006,40 €');
+  expect('say: the total is the engine\'s, whatever the model wrote (a made-up total in the arguments changes nothing)', said([{ ...acme, args: { ...acme.args, total: 9999, lines: [{ description: 'x', qty: '3', price: '60', vat: 21 }] } }]) === 'Invoice draft for Acme Studio SL: 217,80 € (3 × 60,00 € + VAT)');
+  expect('say: two lines, an exempt line, fractional quantities and a bad VAT rate are described honestly', said([{ ...acme, args: { ...acme.args, lines: [acme.args.lines[0], { description: 'Book', qty: 1, price: 10, vat: 10 }] } }]) === 'Invoice draft for Acme Studio SL: 228,80 € (2 lines + VAT)' && said([{ ...acme, args: { ...acme.args, lines: [{ description: 'Course', qty: 2.5, price: 40, vat: 0 }] } }]) === 'Invoice draft for Acme Studio SL: 100,00 € (2,5 × 40,00 €, VAT exempt)' && said([{ ...acme, args: { ...acme.args, lines: [{ description: 'x', qty: 1, price: 100, vat: 7 }] } }]) === 'Invoice draft for Acme Studio SL: 121,00 € (1 × 100,00 € + VAT)');
+  expect('say: one proposal per invoice action, with the client and amount from the ledger', said([{ type: 'propose_reminder', args: { number: sample[3].number } }]) === `Payment reminder for Hotel Mirador SL (${sample[3].number}, 990,00 €).` && said([{ type: 'propose_collect', args: { number: sample[4].number } }]) === `Send ${sample[4].number} (Marta Pardo, 726,00 €) with PayPal so the client can pay online.` && said([{ type: 'propose_mark_paid', args: { number: sample[3].number, method: 'CASH' } }]) === `Record the cash payment of ${sample[3].number} (Hotel Mirador SL, 990,00 €).` && said([{ type: 'propose_cancel', args: { number: sample[3].number } }]) === `Cancel ${sample[3].number} (Hotel Mirador SL, 990,00 €) with a chained cancellation record.` && said([{ type: 'show_vat_return', args: {} }]) === 'Your Modelo 303 draft for 2026-Q3.' && said([{ type: 'show_vat_return', args: { quarter: '2026-Q2' } }]) === 'Your Modelo 303 draft for 2026-Q2.');
+  expect('say: other insights say what they show ("Revenue by client: 1 invoice, 290,40 €") and a count is just its number', said([{ type: 'propose_widget', args: { title: 'Revenue by client', type: 'bar', metric: 'invoiced', groupBy: 'client', period: 'quarter' } }]) === 'Revenue by client: 1 invoice, 290,40 €' && said([{ type: 'propose_widget', args: { title: 'Invoices by month', type: 'bar', metric: 'count', groupBy: 'month', period: 'all' } }]) === 'Invoices by month: 6');
+  expect('say: plans of other shapes are counted too (reminders only, an invoice and a reminder, insights and payments)', said([plan[0], plan[0]]) === 'Plan: 2 reminders.' && said([acme, plan[0]]) === 'Plan: 1 reminder and 1 invoice draft.' && said([owesSpec, { type: 'propose_mark_paid', args: { number: sample[3].number } }, { type: 'propose_cancel', args: { number: sample[4].number } }]) === 'Plan: 1 payment to record, 1 cancellation and 1 insight.');
+  expect('say in Spanish: the same three sentences, with the engine figures', said([acme], 'es') === 'Borrador de factura para Acme Studio SL: 217,80 € (3 × 60,00 € + IVA)' && said(plan, 'es') === 'Plan para cerrar el trimestre: 1 recordatorio, 2 cobros con PayPal y tu borrador del IVA.' && said([owesSpec], 'es') === 'Esto es lo que te deben: 3 facturas pendientes, 2006,40 €' && said([{ type: 'show_vat_return', args: {} }], 'es') === 'Tu borrador del Modelo 303 de 2026-Q3.');
+  expect('say: nothing to say, or nothing it knows, falls back to the generic line, and the sentence is plain text that md() escapes when it is shown', synthReply([], { records: sample, today }) === '' && said([{ type: 'something_new', args: {} }]) === 'Here is my proposal. Review it and confirm.' && !md(synthReply([{ ...acme, args: { ...acme.args, recipient: { name: hostile, nif: '', email: '' } } }], { records: sample, today })).includes('<img'));
+  const wild = normalizeProposal({ recipient: { name: 'x'.repeat(300), nif: ' b-1234 5674 ', email: 'a@b.example' }, lines: [{ description: '', qty: -3, price: 'abc', vat: 7 }], due_days: 400 });
+  expect('proposals are normalized before anything is shown or said: bounded text, a clean NIF, quantities and prices above zero, a Spanish VAT rate, due days 0 to 90', wild.recipient.name.length === 120 && wild.recipient.nif === 'B12345674' && wild.lines[0].description === 'Service' && wild.lines[0].qty === 0.01 && wild.lines[0].price === 0.01 && wild.lines[0].vat === 21 && wild.dueDays === 90 && normalizeProposal({}).lines.length === 1 && normalizeProposal({}).dueDays === 15);
+  expect('say: the language follows the person ("Factura a Lumen…", "¿Quién me debe dinero?" and "Cierra el trimestre" are Spanish, the rest English)', ['Factura a Lumen Foods SL por 2 diseños de etiqueta a 250 € más IVA', '¿Quién me debe dinero?', 'Cierra el trimestre', 'Ingresos por cliente este trimestre'].every((t) => detectLang(t) === 'es') && ['Invoice Acme Studio SL for 3 hours', 'Close my quarter', 'Revenue by client this quarter', 'Who owes me money?', '', undefined].every((t) => detectLang(t) === 'en'));
 }
 
 console.log(failed ? `${failed} UI check(s) failed` : 'all UI checks passed');

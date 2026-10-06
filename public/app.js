@@ -7,7 +7,8 @@ import {
 import { esc, eur, fmtDate, isoToday, md, safeUrl } from './js/fmt.js';
 import { chainBlocks, chainStatus, chainTrackHtml, statusHtml } from './js/chain.js';
 import { engineChecks, checksHtml } from './js/checks.js';
-import { proposalPaperHtml } from './js/proposal.js';
+import { normalizeProposal as normalize, proposalPaperHtml } from './js/proposal.js';
+import { detectLang, synthReply } from './js/say.js';
 import { isPlan, planProgress, planSummary, pendingLowRisk, hasHighRisk } from './js/plan.js';
 import { reduceActivity, activityRows, activityHtml } from './js/activity.js';
 import { renderDocument } from './js/document.js';
@@ -127,22 +128,6 @@ function actionTrace(a) {
 const chatHistory = () => state.chat.slice(0, -2).slice(-8)
   .filter((m) => !String(m.text).startsWith('⚠'))
   .map((m) => ({ role: m.role === 'user' ? 'user' : 'assistant', text: [m.text, ...(m.actions || []).map(actionTrace)].join('\n').slice(0, 800) }));
-
-function normalize(args = {}) {
-  const lines = (Array.isArray(args.lines) ? args.lines : []).slice(0, 20).map((l) => ({
-    description: String(l.description || 'Service').slice(0, 200),
-    qty: Math.max(0.01, Number(l.qty) || 1),
-    price: Math.max(0.01, Number(l.price) || 0),
-    vat: [0, 4, 10, 21].includes(Number(l.vat)) ? Number(l.vat) : 21,
-  }));
-  const r = args.recipient || {};
-  return {
-    recipient: { name: String(r.name || 'Client').slice(0, 120), nif: String(r.nif || '').toUpperCase().replace(/[\s-]/g, '').slice(0, 20), email: String(r.email || '').slice(0, 254) },
-    lines: lines.length ? lines : [{ description: 'Service', qty: 1, price: 1, vat: 21 }],
-    description: String(args.description || '').slice(0, 250),
-    dueDays: args.due_days == null || !Number.isFinite(Number(args.due_days)) ? 15 : Math.min(90, Math.max(0, Math.round(Number(args.due_days)))),
-  };
-}
 
 const paypalPayload = (rec, dueDays) => ({
   number: rec.number, date: isoFromDmy(rec.date), dueDays, issuerName: rec.issuerName,
@@ -870,7 +855,9 @@ async function ask(text) {
   state.chat.push(pending);
   renderChat();
   const r = await post('/api/agent', { message: text, context: context(), history: chatHistory() });
-  pending.text = r.error ? `⚠ ${r.error}` : r.reply;
+  // A model that answers with proposals and no text gets its sentence written here, from the proposals and the ledger.
+  const said = r.synthesize ? synthReply(r.actions, { records: state.records, today: today(), lang: detectLang(text) }) : '';
+  pending.text = r.error ? `⚠ ${r.error}` : said || r.reply;
   pending.actions = r.error ? [] : (r.actions || []).slice(0, 10);
   if (state.chat.length > 60) state.chat = state.chat.slice(-60);
   chatFocus = Math.max(0, state.chat.indexOf(pending) - 1); // the question and its answer, read from the top

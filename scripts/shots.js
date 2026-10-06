@@ -172,6 +172,7 @@ try {
     await settle(page, 400);
     const checks = await page.locator('.checks li').allInnerTexts();
     check(`[${view.name}] proposal: paper document with the six engine checks`, (await page.locator('.proposal .paper').count()) === 1 && checks.length === 6 && /Client matched from ledger: Acme Studio SL/.test(checks[0]) && /Totals computed by the engine: 180,00 \+ 37,80 = 217,80/.test(checks[3].replace(/ /g, ' ')));
+    check(`[${view.name}] agent sentence: the model sent the draft without text, so the sentence is written from the proposal and the engine ("Invoice draft for Acme Studio SL: 217,80 € (3 × 60,00 € + VAT)")`, (await page.locator('.bubble-agent').last().innerText()).replace(/\s+/g, ' ').trim() === 'Invoice draft for Acme Studio SL: 217,80 € (3 × 60,00 € + VAT)');
     await shot('02-proposal-checks');
     if (!view.mobile) {
       // The same proposal on a taller window, where the whole paper and every check fit in the agent column.
@@ -369,9 +370,17 @@ try {
     await page.waitForSelector('.proposal');
     await settle(page, 600);
     check('flows: a new proposal reuses the client in the ledger (Lumen email on the paper)', /pagos@lumen\.example/.test(await page.locator('.proposal .paper').last().innerText()));
+    check('flows: a request without a sentence from the model gets one from the proposal (Lumen: "Invoice draft for Lumen Foods SL: 242,00 € (2 × 100,00 € + VAT)")', (await page.locator('.bubble-agent').last().innerText()).replace(/\s+/g, ' ').trim() === 'Invoice draft for Lumen Foods SL: 242,00 € (2 × 100,00 € + VAT)');
     await page.locator('.proposal [data-act="discard"]').last().click();
     await settle(page);
     check('flows: Discard dismisses the proposal and logs it', /Dismissed/.test(await page.locator('#activityList').innerText()));
+    await page.fill('#msg', 'Factura a Lumen Foods SL por 2 diseños de etiqueta a 250 € más IVA');
+    await page.press('#msg', 'Enter');
+    await page.waitForFunction(() => !document.querySelector('.thinking'), null, { timeout: 15000 });
+    await settle(page, 600);
+    check('flows: a Spanish request gets a Spanish sentence ("Borrador de factura para Lumen Foods SL: 605,00 € (2 × 250,00 € + IVA)")', (await page.locator('.bubble-agent').last().innerText()).replace(/\s+/g, ' ').trim() === 'Borrador de factura para Lumen Foods SL: 605,00 € (2 × 250,00 € + IVA)');
+    await page.locator('.proposal [data-act="discard"]').last().click();
+    await settle(page);
     await page.reload({ waitUntil: 'networkidle' });
     await settle(page, 1500);
     await gridReady(page);
@@ -483,6 +492,7 @@ try {
     const insight = lastInsight();
     const legendText = (await insight.locator('.insight-legend').innerText()).replace(/\s+/g, ' ');
     check(`[${view.name}] Insight proposal: a card with the title, the engine's figure, a donut chart, the legend with amounts, the honest note and Pin / Dismiss`, (await insight.locator('.insight-title').innerText()) === 'Who still owes what' && /2006,40/.test(await insight.innerText()) && (await insight.locator('canvas').count()) === 1 && /Hotel Mirador SL 990,00 € 49%/.test(legendText) && /not by the AI/.test(await insight.innerText()) && (await insight.locator('[data-act="pin"]').innerText()) === 'Pin to board' && (await insight.locator('[data-act="discard"]').isVisible()));
+    check(`[${view.name}] agent sentence: "Who owes me money?" is answered with a sentence written from the widget ("Here is who owes you money: 3 open invoices, 2006,40 €")`, (await page.locator('#chat .bubble-agent').last().textContent()).replace(/\s+/g, ' ').trim() === 'Here is who owes you money: 3 open invoices, 2006,40 €');
     check(`[${view.name}] Insight proposal: it is not counted as a decision waiting for you (the Ask Cuadra badge stays at 0) and the chat shows it without a plan card`, (await page.locator('#openAgent').getAttribute('data-pending')) === '0' && (await page.locator('#chat .plan').count()) === 0);
     // The card from its first line (the question and the answer above it scroll out of the way).
     const cardToTop = () => page.evaluate(() => { const c = document.querySelector('#chat'); const k = [...c.querySelectorAll('.insight')].at(-1); c.scrollTop += k.getBoundingClientRect().top - c.getBoundingClientRect().top - 6; });

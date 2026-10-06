@@ -26,3 +26,21 @@ export function proposalPaperHtml(inv, { issuer, today }) {
     <div class="paper-due">${esc(due)}</div>
   </article>`;
 }
+
+// What the model sent for an invoice, reduced to what can be shown and issued: bounded text, quantities and prices above
+// zero, a Spanish VAT rate (21 when it is anything else) and due days between 0 and 90.
+export function normalizeProposal(args = {}) {
+  const lines = (Array.isArray(args.lines) ? args.lines : []).slice(0, 20).map((l) => ({
+    description: String(l.description || 'Service').slice(0, 200),
+    qty: Math.max(0.01, Number(l.qty) || 1),
+    price: Math.max(0.01, Number(l.price) || 0),
+    vat: [0, 4, 10, 21].includes(Number(l.vat)) ? Number(l.vat) : 21,
+  }));
+  const r = args.recipient || {};
+  return {
+    recipient: { name: String(r.name || 'Client').slice(0, 120), nif: String(r.nif || '').toUpperCase().replace(/[\s-]/g, '').slice(0, 20), email: String(r.email || '').slice(0, 254) },
+    lines: lines.length ? lines : [{ description: 'Service', qty: 1, price: 1, vat: 21 }],
+    description: String(args.description || '').slice(0, 250),
+    dueDays: args.due_days == null || !Number.isFinite(Number(args.due_days)) ? 15 : Math.min(90, Math.max(0, Math.round(Number(args.due_days)))),
+  };
+}
