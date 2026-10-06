@@ -128,11 +128,12 @@ expect('activity: rendered entries are escaped and name the actor for screen rea
 // 5. Document and verification link (A5): the record travels in a URL fragment and is re-hashed by the reader
 const issued = sample.find((r) => r.kind !== 'anulacion' && r.number === sample[0].number);
 const withPayPal = { ...issued, email: 'billing@acme.example', paypal: { id: 'INV2-MOCK-0001', token: 'SECRET-TOKEN', status: 'SENT', payerUrl: 'https://www.sandbox.paypal.com/invoice/p/#INV2-MOCK-0001' } };
+const canDeflate = (() => { try { new CompressionStream('deflate-raw'); new DecompressionStream('deflate-raw'); return true; } catch { return false; } })();
 const packed = await encodeRecord(withPayPal);
 const unpacked = await decodeRecord(packed);
-expect('link: a record survives encode and decode (compressed)', packed.startsWith('z.') && JSON.stringify(unpacked) === JSON.stringify(sanitizeRecord(shareable(withPayPal))) && unpacked.number === issued.number && unpacked.hash === issued.hash && unpacked.lines.length === issued.lines.length);
+expect('link: a record survives encode and decode (compressed)', packed.startsWith(canDeflate ? 'z.' : 'j.') && JSON.stringify(unpacked) === JSON.stringify(sanitizeRecord(shareable(withPayPal))) && unpacked.number === issued.number && unpacked.hash === issued.hash && unpacked.lines.length === issued.lines.length);
 const plain = await encodeRecord(withPayPal, { compress: false });
-expect('link: the uncompressed fallback round-trips too', plain.startsWith('j.') && JSON.stringify(await decodeRecord(plain)) === JSON.stringify(unpacked) && packed.length < plain.length);
+expect('link: the uncompressed fallback round-trips too', plain.startsWith('j.') && JSON.stringify(await decodeRecord(plain)) === JSON.stringify(unpacked) && (!canDeflate || packed.length < plain.length));
 expect('link: a decoded record verifies, with the hash it was issued with', (await verifyRecord(unpacked)).ok && (await verifyRecord(unpacked)).hash === issued.hash);
 expect('link: a cancellation record round-trips and verifies', await (async () => { const c = sample.find((r) => r.kind === 'anulacion'); const back = await decodeRecord(await encodeRecord(c)); return back.kind === 'anulacion' && back.reason === c.reason && (await verifyRecord(back)).ok; })());
 const forgedTotal = await decodeRecord(await encodeRecord({ ...issued, total: '999.00' }));
@@ -146,7 +147,7 @@ expect('link: a payer link that is not PayPal is dropped', !('payerUrl' in share
 const rejects = async (value, code) => { try { await decodeRecord(value); return false; } catch (e) { return e instanceof ShareError && e.code === code; } };
 const rawLink = (obj) => `j.${Buffer.from(JSON.stringify(obj)).toString('base64url')}`;
 expect('link: empty, malformed and oversized values are rejected', await rejects('', 'empty') && await rejects('nonsense', 'malformed') && await rejects('z.@@@', 'malformed') && await rejects(`j.${'A'.repeat(MAX_FRAGMENT)}`, 'too-large') && await rejects(`z.${Buffer.from('not deflate').toString('base64url')}`, 'malformed'));
-expect('link: a small link that inflates into a huge payload is stopped (16 KB cap)', await (async () => { const { deflateRawSync } = await import('node:zlib'); const bomb = deflateRawSync(Buffer.alloc(5 * 1024 * 1024, 32)); return bomb.length < MAX_FRAGMENT && (await rejects(`z.${bomb.toString('base64url')}`, 'too-large')); })());
+expect('link: a small link that inflates into a huge payload is stopped (16 KB cap)', await (async () => { const { deflateRawSync } = await import('node:zlib'); const bomb = deflateRawSync(Buffer.alloc(5 * 1024 * 1024, 32)); return !canDeflate || (bomb.length < MAX_FRAGMENT && (await rejects(`z.${bomb.toString('base64url')}`, 'too-large'))); })());
 expect('link: the record is rebuilt from known fields only, with strict types', await (async () => {
   const good = shareable(issued);
   const poisoned = await decodeRecord(`j.${Buffer.from(`${JSON.stringify({ ...good, extra: '<img src=x>', qr: 'https://evil.example/' }).slice(0, -1)},"__proto__":{"admin":true}}`).toString('base64url')}`);
