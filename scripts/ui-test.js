@@ -174,5 +174,15 @@ expect('verify page: never calls a server (no fetch, XHR, beacon or form)', !/fe
 expect('verify page: print rules show only the document', /@media print[\s\S]*\.print-doc main > :not\(#paper\)\s*\{\s*display: none !important/.test(css) && verifyPage.includes('class="print-doc') && verifyPage.includes('id="paper"') && (verifyPage.match(/no-print/g) || []).length >= 4);
 expect('verify page: honest text and the Print button', verifyPage.includes("Generated from the issuer's ledger copy. For legal effect, scan the AEAT QR.") && verifyPage.includes('Print / Save as PDF') && /window\.print\(\)/.test(verifyJs));
 
+// 6. Social and brand (A9): the card, the icons and the metas that point to them
+const png = (p) => { const b = readFileSync(new URL(`../${p}`, import.meta.url)); return { size: b.length, magic: b.subarray(1, 4).toString(), w: b.readUInt32BE(16), h: b.readUInt32BE(20) }; };
+const og = png('public/og.png');
+const icon = png('public/icon-180.png');
+expect('og.png is a 1200x630 PNG under 300 KB', og.magic === 'PNG' && og.w === 1200 && og.h === 630 && og.size < 300 * 1024);
+expect('icon-180.png is a 180x180 PNG and favicon.svg is the new C of two links', icon.magic === 'PNG' && icon.w === 180 && icon.h === 180 && /<svg/.test(read('public/favicon.svg')) && read('public/favicon.svg').includes('#a5b4fc') && read('public/favicon.svg').includes('#34d399'));
+const metas = (html) => ({ ogImage: /property="og:image" content="https:\/\/cuadra-invoices\.vercel\.app\/og\.png"/.test(html), twitter: /name="twitter:card" content="summary_large_image"/.test(html), title: /property="og:title"/.test(html) && /name="twitter:title"/.test(html), touch: /rel="apple-touch-icon" href="\/icon-180\.png"/.test(html), icon: /rel="icon" href="\/favicon\.svg"/.test(html) });
+expect('index.html and verify.html carry the OG and Twitter metas, the favicon and the touch icon', Object.values(metas(read('public/index.html'))).every(Boolean) && Object.values(metas(read('public/verify.html'))).every(Boolean));
+expect('the CSP gained no origin: fonts and styles still come only from Google Fonts', (() => { const csp = JSON.parse(read('vercel.json')).headers[0].headers.find((h) => h.key === 'Content-Security-Policy').value; return csp.includes("script-src 'self';") && csp.includes('style-src \'self\' \'unsafe-inline\' https://fonts.googleapis.com;') && csp.includes('font-src https://fonts.gstatic.com;') && csp.includes("img-src 'self' data:;") && csp.includes("connect-src 'self';") && !/https:\/\/(?!fonts\.g)/.test(csp); })());
+
 console.log(failed ? `${failed} UI check(s) failed` : 'all UI checks passed');
 process.exit(failed ? 1 : 0);

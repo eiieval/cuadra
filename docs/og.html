@@ -1,0 +1,73 @@
+<!doctype html>
+<!-- Source of public/og.png (1200x630, the link-preview card). Render it with: node scripts/social-card.js
+     Self-contained: inline styles and the same three fonts as the app, loaded from Google Fonts while the card is
+     rendered (the PNG is what ships; the app never loads this file). The blocks mirror the live chain of the app. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Cuadra social card</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Instrument+Serif:ital@1&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root { --ink: #0a0d14; --surface: #10141f; --surface-2: #161b29; --text: #e8ecf4; --soft: #94a3b8; --ok: #34d399; --warn: #fbbf24; --bad: #fb7185; --link: #a5b4fc; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 1200px; height: 630px; overflow: hidden; background: var(--ink); }
+  body { position: relative; color: var(--text); font-family: Inter, system-ui, 'Segoe UI', sans-serif; -webkit-font-smoothing: antialiased; background-image: linear-gradient(rgba(255,255,255,.03) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.03) 1px, transparent 1px); background-size: 24px 24px; }
+  .glow { position: absolute; inset: 0; background: radial-gradient(48% 60% at 100% 0%, rgba(165,180,252,.13), transparent 65%), radial-gradient(44% 55% at 0% 100%, rgba(52,211,153,.09), transparent 65%); }
+  .wrap { position: relative; display: flex; flex-direction: column; height: 100%; padding: 50px 70px 48px; }
+  .top { display: flex; align-items: center; gap: 16px; }
+  .top img { width: 56px; height: 56px; }
+  .name { font-size: 38px; font-weight: 700; letter-spacing: -.02em; }
+  .url { margin-left: auto; font-size: 22px; color: var(--soft); }
+  h1 { margin-top: 44px; font-size: 64px; line-height: 1.05; font-weight: 800; letter-spacing: -.035em; white-space: nowrap; }
+  h1 em { font-style: normal; color: var(--ok); }
+  .brand { margin-top: 16px; font-family: 'Instrument Serif', Georgia, serif; font-style: italic; font-size: 36px; line-height: 1.2; color: var(--soft); }
+  .chain { position: relative; display: flex; align-items: center; margin-top: auto; }
+  .blk { display: flex; flex-direction: column; justify-content: space-between; width: 148px; height: 96px; padding: 11px 13px 10px; border: 1.5px solid; border-radius: 14px; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 15px; line-height: 1.2; }
+  .blk b { display: block; font-weight: 600; font-size: 15px; }
+  .blk .amt { font-size: 18px; font-weight: 500; }
+  .blk .hash { display: flex; justify-content: space-between; color: var(--soft); font-size: 14px; }
+  .ok { border-color: rgba(52,211,153,.4); background: rgba(52,211,153,.07); }
+  .ok .hash i { color: var(--ok); font-style: normal; }
+  .bad { border-color: var(--bad); background: rgba(251,113,133,.14); box-shadow: 0 0 0 5px rgba(251,113,133,.16); color: var(--bad); }
+  .bad .hash, .bad .hash i { color: var(--bad); font-style: normal; }
+  .grey { border-style: dashed; border-color: rgba(255,255,255,.26); color: var(--soft); background: transparent; }
+  .link { width: 36px; height: 16px; flex: none; }
+  .note { position: absolute; top: 110px; left: 590px; width: 440px; text-align: center; font-size: 19px; font-weight: 600; color: var(--bad); }
+  .foot { display: flex; gap: 14px; margin-top: 56px; }
+  .chip { padding: 8px 16px; border: 1px solid rgba(255,255,255,.14); border-radius: 999px; background: rgba(255,255,255,.04); font-size: 20px; font-weight: 500; color: #cbd5e1; }
+</style>
+</head>
+<body>
+  <div class="glow"></div>
+  <div class="wrap">
+    <div class="top">
+      <img src="../public/favicon.svg" alt="">
+      <div class="name">Cuadra</div>
+      <div class="url">cuadra-invoices.vercel.app</div>
+    </div>
+    <h1>The invoice book that <em>proves itself.</em></h1>
+    <p class="brand">Describe the sale. Confirm. Get paid. Stay compliant.</p>
+    <div class="chain" aria-hidden="true">
+      <div class="blk ok"><b>CU-0001</b><span class="amt">1.452,00 €</span><span class="hash">7F9E36 <i>✓</i></span></div>
+      <svg class="link" viewBox="0 0 26 14" fill="none" stroke="rgba(52,211,153,.75)" stroke-width="1.6"><rect x="1.5" y="3.5" width="14" height="7" rx="3.5"/><rect x="10.5" y="3.5" width="14" height="7" rx="3.5"/></svg>
+      <div class="blk ok"><b>CU-0002</b><span class="amt">605,00 €</span><span class="hash">9D5768 <i>✓</i></span></div>
+      <svg class="link" viewBox="0 0 26 14" fill="none" stroke="rgba(52,211,153,.75)" stroke-width="1.6"><rect x="1.5" y="3.5" width="14" height="7" rx="3.5"/><rect x="10.5" y="3.5" width="14" height="7" rx="3.5"/></svg>
+      <div class="blk ok"><b>CU-0003</b><span class="amt">374,40 €</span><span class="hash">F0DDE6 <i>✓</i></span></div>
+      <svg class="link" viewBox="0 0 26 14" fill="none" stroke="rgba(52,211,153,.75)" stroke-width="1.6"><rect x="1.5" y="3.5" width="14" height="7" rx="3.5"/><rect x="10.5" y="3.5" width="14" height="7" rx="3.5"/></svg>
+      <div class="blk ok"><b>CU-0004</b><span class="amt">990,00 €</span><span class="hash">20DD25 <i>✓</i></span></div>
+      <svg class="link" viewBox="0 0 26 14" fill="none" stroke="rgba(52,211,153,.75)" stroke-width="1.6"><rect x="1.5" y="3.5" width="14" height="7" rx="3.5"/><rect x="10.5" y="3.5" width="14" height="7" rx="3.5"/></svg>
+      <div class="blk bad"><b>CU-0005</b><span class="amt">826,00 €</span><span class="hash">4346E1 <i>✕</i></span></div>
+      <svg class="link" viewBox="0 0 26 14" fill="none" stroke="#fb7185" stroke-width="1.6" stroke-linecap="round"><rect x="1.5" y="3.5" width="9.5" height="7" rx="3.5"/><rect x="15" y="3.5" width="9.5" height="7" rx="3.5" stroke-dasharray="2.5 2"/><path d="M12.4 1.5l1.2 2.2M13.6 10.3l-1.2 2.2"/></svg>
+      <div class="blk grey"><b>↳ Cancels</b><span class="amt" style="font-size:16px">CU-0003</span><span class="hash">53B26A <i>–</i></span></div>
+      <div class="note">↑ Alter one amount: the chain breaks here</div>
+    </div>
+    <div class="foot">
+      <span class="chip">VeriFactu-ready records</span>
+      <span class="chip">PayPal Invoicing and Subscriptions</span>
+      <span class="chip">MCP server for AI agents</span>
+    </div>
+  </div>
+</body>
+</html>
