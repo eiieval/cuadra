@@ -8,7 +8,7 @@
     "dev": "node dev-server.js",
     "start": "node dev-server.js",
     "mcp": "node mcp/server.js",
-    "test": "node scripts/test.js && node scripts/mcp-test.js",
+    "test": "node scripts/test.js && node scripts/ui-test.js && node scripts/mcp-test.js",
     "paypal:setup": "node scripts/paypal-setup.js",
     "build:css": "npx -y tailwindcss@3 -c tailwind.config.cjs -i styles/input.css -o public/styles.css --minify"
   },

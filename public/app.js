@@ -4,15 +4,10 @@ import {
   nextNumber, buildSample, addDays, daysBetween, isoFromDmy, quarterOfIso,
 } from './js/ledger.js';
 
+import { esc, eur, fmtDate, isoToday, md, safeUrl } from './js/fmt.js';
+
 const $ = (s) => document.querySelector(s);
-const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
-const eur = (n) => new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR' }).format(Number(n) || 0);
-const isoToday = () => new Date().toLocaleDateString('sv-SE');
-const fmtDate = (iso) => (iso ? new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }).format(new Date(`${iso}T12:00:00`)) : '');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-// Minimal, safe formatting for agent replies: escape first, then only add <b> and bullet glyphs.
-const md = (s) => esc(s).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/^\s*[*-]\s+/gm, '• ').replace(/(^|\s)\*([^*\n]+)\*(?=\s|$|[.,;:])/g, '$1$2');
-const safeUrl = (u) => (/^https:\/\/www\.(sandbox\.)?paypal\.com\//.test(String(u || '')) ? u : null);
 
 const KEY = 'cuadra-demo-v1';
 const BADGE = { PAID: 'badge badge-ok', MARKED_AS_PAID: 'badge badge-ok', OVERDUE: 'badge badge-bad', ERROR: 'badge badge-bad', CANCELLED: 'badge badge-mute', SENT: 'badge badge-warn', UNPAID: 'badge badge-warn', PARTIALLY_PAID: 'badge badge-warn' };
@@ -193,43 +188,43 @@ async function annul(rec, reason) {
   return `${rec.number} cancelled with a chained VeriFactu cancellation record${rec.paypal?.id ? '; the PayPal invoice is cancelled too' : ''}.`;
 }
 
-// ---------- rendering ----------
+/// ---------- rendering ----------
 
 const buttons = (id, primary, label, secondary = 'Dismiss') => `<div class="mt-3 flex flex-wrap gap-2"><button class="btn-primary" data-act="${primary}" data-id="${id}">${esc(label)}</button><button class="btn-ghost" data-act="discard" data-id="${id}">${esc(secondary)}</button></div>`;
-const invoiceLine = (rec) => `<b>${esc(rec.number)}</b> · ${esc(rec.recipient?.name)} · ${eur(rec.total)} <span class="${BADGE[status(rec)] || 'badge'}">${esc(status(rec).replace(/_/g, ' '))}</span>`;
+const invoiceLine = (rec) => `<b class="num">${esc(rec.number)}</b> · ${esc(rec.recipient?.name)} · <span class="num">${eur(rec.total)}</span> <span class="${BADGE[status(rec)] || 'badge'}">${esc(status(rec).replace(/_/g, ' '))}</span>`;
 
 function vatTable(v, compact = false) {
-  const rows = v.rows.map((r) => `<tr class="border-t border-white/5"><td class="py-1 pr-2 text-slate-400">${r.rate}%</td><td class="pr-2 text-right tabular-nums"><span class="box">${r.boxes[0]}</span>${eur(r.base)}</td><td class="text-right tabular-nums"><span class="box">${r.boxes[2]}</span>${eur(r.tax)}</td></tr>`).join('');
+  const rows = v.rows.map((r) => `<tr class="border-t border-line"><td class="py-1.5 pr-2 text-soft">${r.rate}%</td><td class="num pr-2 text-right"><span class="box">${r.boxes[0]}</span>${eur(r.base)}</td><td class="num text-right"><span class="box">${r.boxes[2]}</span>${eur(r.tax)}</td></tr>`).join('');
   const days = daysBetween(today(), v.deadline);
   const ended = today() > v.to;
-  const when = !ended ? `Quarter in progress · file by ${fmtDate(v.deadline)}` : days >= 0 ? `<b class="text-amber-200">Due in ${days} day${days === 1 ? '' : 's'}</b> · ${fmtDate(v.deadline)}` : `Filing window closed on ${fmtDate(v.deadline)}`;
-  return `<div class="text-xs text-slate-400">${when}</div>
-    <table class="mt-2 w-full text-xs"><thead class="text-slate-500"><tr><th class="text-left font-normal">VAT rate</th><th class="text-right font-normal">Taxable base</th><th class="text-right font-normal">Output VAT</th></tr></thead><tbody>${rows}</tbody></table>
-    <div class="mt-2 flex justify-between border-t border-white/10 pt-2 text-sm"><span class="text-slate-400"><span class="box">27</span>Total output VAT</span><b class="tabular-nums">${eur(v.boxes['27'])}</b></div>
-    ${compact ? '' : `<div class="mt-2 text-[11px] leading-relaxed text-slate-500">${v.invoices} invoice${v.invoices === 1 ? '' : 's'}${v.cancelled ? `, ${v.cancelled} cancelled and excluded` : ''}${Number(v.exempt) ? ` · exempt (0%) base ${eur(v.exempt)}, declared outside boxes 01–09` : ''}. Output VAT only: add deductible VAT from your expenses (boxes 28–45) before filing. Draft for your adviser, not a filing.</div>`}`;
+  const when = !ended ? `Quarter in progress · file by ${fmtDate(v.deadline)}` : days >= 0 ? `<b class="text-warn">Due in ${days} day${days === 1 ? '' : 's'}</b> · ${fmtDate(v.deadline)}` : `Filing window closed on ${fmtDate(v.deadline)}`;
+  return `<div class="text-xs text-soft">${when}</div>
+    <table class="mt-2 w-full text-xs"><thead class="text-soft"><tr><th class="text-left font-normal">VAT rate</th><th class="text-right font-normal">Taxable base</th><th class="text-right font-normal">Output VAT</th></tr></thead><tbody>${rows}</tbody></table>
+    <div class="mt-2 flex justify-between border-t border-line pt-2 text-sm"><span class="text-soft"><span class="box">27</span>Total output VAT</span><b class="num">${eur(v.boxes['27'])}</b></div>
+    ${compact ? '' : `<div class="mt-2 text-[11px] leading-relaxed text-soft">${v.invoices} invoice${v.invoices === 1 ? '' : 's'}${v.cancelled ? `, ${v.cancelled} cancelled and excluded` : ''}${Number(v.exempt) ? ` · exempt (0%) base ${eur(v.exempt)}, declared outside boxes 01–09` : ''}. Output VAT only: add deductible VAT from your expenses (boxes 28–45) before filing. Draft for your adviser, not a filing.</div>`}`;
 }
 
 function actionCard(a, mi, ai) {
   const id = `${mi}-${ai}`;
-  const done = a.done ? `<div class="mt-2 text-xs text-emerald-300">${esc(a.done)}</div>` : '';
+  const done = a.done ? `<div class="card-done">${esc(a.done)}</div>` : '';
   if (a.type === 'show_vat_return') {
     const q = /^\d{4}-Q[1-4]$/.test(a.args?.quarter || '') ? a.args.quarter : returnQuarter(today());
-    return `<div class="card"><div class="flex items-center gap-2"><div class="text-xs text-slate-400">Modelo 303 draft · ${esc(q)}</div><button class="ml-auto btn-ghost" data-act="open-vat" data-id="${id}" data-q="${esc(q)}">Open</button></div><div class="mt-1">${vatTable(vatReturn(state.records, q), true)}</div></div>`;
+    return `<div class="card"><div class="flex items-center gap-2"><div class="text-xs text-soft">Modelo 303 draft · ${esc(q)}</div><button class="btn-ghost ml-auto !min-h-8" data-act="open-vat" data-id="${id}" data-q="${esc(q)}">Open</button></div><div class="mt-1">${vatTable(vatReturn(state.records, q), true)}</div></div>`;
   }
   if (a.type !== 'propose_invoice') {
     const rec = findInvoice(state.records, a.args?.number);
-    if (!rec) return `<div class="card text-xs text-amber-200">Invoice ${esc(a.args?.number || '?')} is not in the ledger.</div>`;
+    if (!rec) return `<div class="card text-xs text-warn">Invoice ${esc(a.args?.number || '?')} is not in the ledger.</div>`;
     const st = status(rec);
-    const head = (label) => `<div class="text-xs text-slate-400">${label}</div><div class="mt-1 text-sm">${invoiceLine(rec)}</div>`;
-    if (a.type === 'propose_reminder') return `<div class="card">${head('Payment reminder')}${done || (rec.paypal?.id && OPEN(st) ? buttons(id, 'remind', 'Send PayPal reminder') : '<div class="mt-2 text-xs text-slate-400">No PayPal invoice to remind.</div>')}</div>`;
-    if (a.type === 'propose_collect') return `<div class="card">${head('Collect with PayPal')}<div class="mt-1 text-[11px] text-slate-400">Creates a PayPal invoice with the VeriFactu verification link, so ${esc(rec.recipient?.name)} can pay online.</div>${done || (!rec.paypal?.id && OPEN(st) ? buttons(id, 'collect', 'Send with PayPal') : '<div class="mt-2 text-xs text-slate-400">Already on PayPal or settled.</div>')}</div>`;
+    const head = (label) => `<div class="text-xs text-soft">${label}</div><div class="mt-1 text-sm">${invoiceLine(rec)}</div>`;
+    if (a.type === 'propose_reminder') return `<div class="card">${head('Payment reminder')}${done || (rec.paypal?.id && OPEN(st) ? buttons(id, 'remind', 'Send PayPal reminder') : '<div class="card-note">No PayPal invoice to remind.</div>')}</div>`;
+    if (a.type === 'propose_collect') return `<div class="card">${head('Collect with PayPal')}<div class="card-note !mt-1">Creates a PayPal invoice with the VeriFactu verification link, so ${esc(rec.recipient?.name)} can pay online.</div>${done || (!rec.paypal?.id && OPEN(st) ? buttons(id, 'collect', 'Send with PayPal') : '<div class="card-note">Already on PayPal or settled.</div>')}</div>`;
     if (a.type === 'propose_mark_paid') {
       const method = METHOD[a.args?.method] ? a.args.method : 'BANK_TRANSFER';
-      return `<div class="card">${head(`Record payment · ${METHOD[method]}`)}${done || (OPEN(st) ? buttons(id, 'mark-paid', 'Mark as paid') : '<div class="mt-2 text-xs text-slate-400">Nothing to record.</div>')}</div>`;
+      return `<div class="card">${head(`Record payment · ${METHOD[method]}`)}${done || (OPEN(st) ? buttons(id, 'mark-paid', 'Mark as paid') : '<div class="card-note">Nothing to record.</div>')}</div>`;
     }
     if (a.type === 'propose_cancel') {
       const blocked = st === 'PAID' ? 'Paid invoices need a corrective invoice, not a cancellation.' : st === 'CANCELLED' && cancelled().has(rec.number) ? 'Already cancelled.' : '';
-      return `<div class="card border-rose-300/20 bg-rose-400/5">${head('Cancel invoice (anulación)')}<div class="mt-1 text-[11px] text-slate-400">${a.args?.reason ? `Reason: ${esc(a.args.reason)}. ` : ''}The invoice is never edited: a VeriFactu cancellation record is appended to the chain${rec.paypal?.id ? ' and the PayPal invoice is cancelled' : ''}.</div>${done || (blocked ? `<div class="mt-2 text-xs text-amber-200">${esc(blocked)}</div>` : buttons(id, 'cancel', 'Cancel invoice', 'Keep it'))}</div>`;
+      return `<div class="card card-bad">${head('Cancel invoice (anulación)')}<div class="card-note !mt-1">${a.args?.reason ? `Reason: ${esc(a.args.reason)}. ` : ''}The invoice is never edited: a VeriFactu cancellation record is appended to the chain${rec.paypal?.id ? ' and the PayPal invoice is cancelled' : ''}.</div>${done || (blocked ? `<div class="card-note text-warn">${esc(blocked)}</div>` : buttons(id, 'cancel', 'Cancel invoice', 'Keep it'))}</div>`;
     }
     return '';
   }
@@ -239,14 +234,14 @@ function actionCard(a, mi, ai) {
   const warn = [];
   if (inv.recipient.nif && !validNif(inv.recipient.nif)) warn.push(`NIF ${inv.recipient.nif} looks invalid`);
   if (!inv.recipient.nif) warn.push('No NIF: valid for a simplified invoice only');
-  const rows = inv.lines.map((l) => `<tr><td class="pr-2 py-0.5">${esc(l.description)}</td><td class="pr-2 text-right tabular-nums whitespace-nowrap">${l.qty} × ${eur(l.price)}</td><td class="text-right text-slate-400">${l.vat}%</td></tr>`).join('');
+  const rows = inv.lines.map((l) => `<tr><td class="py-0.5 pr-2">${esc(l.description)}</td><td class="num whitespace-nowrap pr-2 text-right">${l.qty} × ${eur(l.price)}</td><td class="text-right text-soft">${l.vat}%</td></tr>`).join('');
   return `<div class="card">
-    <div class="flex items-center gap-2"><div class="text-xs text-slate-400">Invoice proposal</div><div class="ml-auto text-[11px] text-slate-400 truncate">${esc(inv.recipient.email || 'no email: PayPal link only')}</div></div>
-    <div class="mt-1 font-semibold">${esc(inv.recipient.name)} ${inv.recipient.nif ? `<span class="font-mono text-xs text-slate-400">${esc(inv.recipient.nif)}</span>` : ''}</div>
+    <div class="flex items-center gap-2"><div class="text-xs text-soft">Invoice proposal</div><div class="ml-auto truncate text-[11px] text-soft">${esc(inv.recipient.email || 'no email: PayPal link only')}</div></div>
+    <div class="mt-1 font-semibold">${esc(inv.recipient.name)} ${inv.recipient.nif ? `<span class="num text-xs text-soft">${esc(inv.recipient.nif)}</span>` : ''}</div>
     <table class="mt-2 w-full text-xs">${rows}</table>
-    <div class="mt-2 flex justify-between text-sm"><span class="text-slate-400">Base ${eur(base)} + VAT ${eur(t.taxTotal)}</span><b class="tabular-nums">${eur(t.total)}</b></div>
-    <div class="mt-1 text-[11px] text-slate-500">Due ${inv.dueDays ? `in ${inv.dueDays} days` : 'on receipt'}</div>
-    ${warn.length ? `<div class="mt-2 text-[11px] text-amber-300/90">${warn.map(esc).join(' · ')}</div>` : ''}
+    <div class="mt-2 flex justify-between text-sm"><span class="text-soft">Base <span class="num">${eur(base)}</span> + VAT <span class="num">${eur(t.taxTotal)}</span></span><b class="num">${eur(t.total)}</b></div>
+    <div class="mt-1 text-[11px] text-soft">Due ${inv.dueDays ? `in ${inv.dueDays} days` : 'on receipt'}</div>
+    ${warn.length ? `<div class="mt-2 text-[11px] text-warn">${warn.map(esc).join(' · ')}</div>` : ''}
     ${done || `<div class="mt-3 flex flex-wrap gap-2"><button class="btn-primary" data-act="issue-send" data-id="${id}">Issue + collect with PayPal</button><button class="btn-ghost" data-act="issue" data-id="${id}">Issue only</button><button class="btn-ghost" data-act="discard" data-id="${id}">Discard</button></div>`}
   </div>`;
 }
@@ -254,9 +249,9 @@ function actionCard(a, mi, ai) {
 function renderChat() {
   $('#chat').innerHTML = state.chat.length
     ? state.chat.map((m, mi) => (m.role === 'user'
-      ? `<div class="flex justify-end"><div class="bubble-user">${esc(m.text)}</div></div>`
-      : `<div class="space-y-2"><div class="bubble-agent">${md(m.text)}</div>${(m.actions || []).map((a, ai) => actionCard(a, mi, ai)).join('')}</div>`)).join('')
-    : '<div class="pt-2 text-sm leading-relaxed text-slate-400">Tell me who to invoice and for what, in English or Spanish. I draft the invoice, you confirm it, and Cuadra issues a VeriFactu record and collects it with PayPal. I can also chase late payers, record payments, cancel mistakes and draft your quarterly VAT return.</div>';
+      ? `<div class="bubble-user">${esc(m.text)}</div>`
+      : `<div class="space-y-2"><div class="bubble-agent${m.text === 'Thinking…' ? ' thinking' : ''}">${md(m.text)}</div>${(m.actions || []).map((a, ai) => actionCard(a, mi, ai)).join('')}</div>`)).join('')
+    : '<div class="pt-1 text-sm leading-relaxed text-soft">Tell me who to invoice and for what, in English or Spanish. I draft the invoice, you confirm it, and Cuadra issues a VeriFactu record and collects it with PayPal. I can also chase late payers, record payments, cancel mistakes and draft your quarterly VAT return.</div>';
   $('#chat').scrollTop = $('#chat').scrollHeight;
 }
 
@@ -265,39 +260,40 @@ function renderKpis() {
   const k = [
     [`Taxable base ${s.quarter}`, eur(s.base), `${s.invoices} invoice${s.invoices === 1 ? '' : 's'} this quarter`],
     ['VAT charged', eur(s.vat), 'output VAT this quarter'],
-    [`Outstanding · ${s.unpaid}`, eur(s.unpaidTotal), s.overdue ? `<span class="text-rose-300">${s.overdue} overdue · ${eur(s.overdueTotal)}</span>` : 'nothing overdue'],
+    [`Outstanding · ${s.unpaid}`, eur(s.unpaidTotal), s.overdue ? `<span class="text-bad">${s.overdue} overdue · ${eur(s.overdueTotal)}</span>` : 'nothing overdue'],
     ['Collected', eur(s.collected), 'PayPal and recorded payments'],
   ];
-  $('#kpis').innerHTML = k.map(([l, v, sub]) => `<div class="glass rounded-xl p-3"><div class="text-[11px] uppercase tracking-wide text-slate-400">${esc(l)}</div><div class="mt-1 text-lg font-semibold tabular-nums">${esc(v)}</div><div class="text-[11px] text-slate-500">${sub}</div></div>`).join('');
+  $('#kpis').innerHTML = k.map(([l, v, sub]) => `<div class="panel kpi"><div class="label">${esc(l)}</div><div class="kpi-value num">${esc(v)}</div><div class="kpi-sub">${sub}</div></div>`).join('');
 }
 
 function renderInvoices() {
+  const invoices = invoicesOf(state.records).length;
+  const cancels = state.records.length - invoices;
+  $('#ledgerCount').textContent = state.records.length ? `${invoices} invoice${invoices === 1 ? '' : 's'}${cancels ? ` · ${cancels} cancellation${cancels === 1 ? '' : 's'}` : ''}` : '';
   if (!state.records.length) {
-    $('#rows').innerHTML = '<tr><td colspan="7" class="py-8 text-center text-sm text-slate-500">No invoices yet. Ask the agent to create one, or <button class="underline text-slate-300" data-sample="1">load a sample quarter</button>.</td></tr>';
+    $('#rows').innerHTML = '<tr><td colspan="6" class="py-8 text-center text-sm text-soft">No invoices yet. Ask the agent to create one, or <button class="link" data-sample="1">load a sample quarter</button>.</td></tr>';
     return;
   }
   $('#rows').innerHTML = state.records.map((r, i) => ({ r, i })).reverse().map(({ r, i }) => {
     if (isAnulacion(r)) {
-      return `<tr class="border-t border-white/5 text-slate-400">
-        <td class="py-2 pr-2 font-mono text-xs whitespace-nowrap">↳ ${esc(r.number)}</td>
-        <td class="pr-2 text-xs" colspan="2">Cancellation record${r.reason ? ` · ${esc(r.reason)}` : ''}</td>
-        <td class="pr-2"><span class="badge badge-mute">Anulación</span></td><td class="hidden sm:table-cell"></td>
-        <td class="pr-2 font-mono text-[11px] hidden md:table-cell" title="${esc(r.hash)}">${esc(r.hash.slice(0, 12))}…</td>
-        <td class="text-right"><button class="btn-ghost" data-i="${i}" data-do="view">View</button></td></tr>`;
+      return `<tr class="text-soft">
+        <td class="num whitespace-nowrap text-xs">↳ ${esc(r.number)}</td>
+        <td class="text-xs" colspan="2">Cancellation record${r.reason ? ` · ${esc(r.reason)}` : ''}</td>
+        <td><span class="badge badge-mute">Anulación</span></td><td class="hidden xl:table-cell"></td>
+        <td class="text-right"><button class="btn-ghost !min-h-8" data-i="${i}" data-do="view">View</button></td></tr>`;
     }
     const st = status(r);
     const action = !OPEN(st) ? '' : r.paypal?.id
-      ? `<button class="btn-ghost" data-i="${i}" data-do="remind">Remind</button>`
-      : `<button class="btn-ghost" data-i="${i}" data-do="collect" title="Send with PayPal">Collect</button>`;
-    const refresh = r.paypal?.id ? `<button class="btn-ghost" data-i="${i}" data-do="refresh" title="Refresh PayPal status" aria-label="Refresh PayPal status">↻</button>` : '';
-    return `<tr class="border-t border-white/5 ${st === 'CANCELLED' ? 'text-slate-500' : ''}">
-      <td class="py-2 pr-2 font-mono text-xs whitespace-nowrap ${st === 'CANCELLED' ? 'line-through' : ''}">${esc(r.number)}</td>
-      <td class="pr-2">${esc(r.recipient?.name)}${r.sample ? ' <span class="text-[10px] text-slate-500">sample</span>' : ''}</td>
-      <td class="pr-2 text-right tabular-nums whitespace-nowrap">${eur(r.total)}</td>
-      <td class="pr-2"><span class="${BADGE[st] || 'badge'}" title="${esc(r.paypal?.error || (r.paypal?.id ? 'On PayPal' : ''))}">${esc(st.replace(/_/g, ' '))}</span>${r.paypal?.id ? ' <span class="text-[10px] text-indigo-300">PayPal</span>' : ''}</td>
-      <td class="pr-2 text-xs text-slate-400 whitespace-nowrap hidden sm:table-cell">${r.dueDate && OPEN(st) ? esc(fmtDate(r.dueDate)) : ''}</td>
-      <td class="pr-2 font-mono text-[11px] text-slate-400 hidden md:table-cell" title="${esc(r.hash)}">${esc(r.hash.slice(0, 12))}…</td>
-      <td class="text-right whitespace-nowrap space-x-1"><button class="btn-ghost" data-i="${i}" data-do="view">View</button>${refresh}${action}</td>
+      ? `<button class="btn-ghost !min-h-8" data-i="${i}" data-do="remind">Remind</button>`
+      : `<button class="btn-ghost !min-h-8" data-i="${i}" data-do="collect" title="Send with PayPal">Collect</button>`;
+    const refresh = r.paypal?.id ? `<button class="btn-ghost !min-h-8" data-i="${i}" data-do="refresh" title="Refresh PayPal status" aria-label="Refresh PayPal status">↻</button>` : '';
+    return `<tr class="${st === 'CANCELLED' ? 'text-soft' : ''}">
+      <td class="num whitespace-nowrap text-xs ${st === 'CANCELLED' ? 'line-through' : ''}" title="${esc(r.hash)}">${esc(r.number)}</td>
+      <td>${esc(r.recipient?.name)}${r.sample ? ' <span class="text-[11px] text-soft">sample</span>' : ''}</td>
+      <td class="num whitespace-nowrap text-right">${eur(r.total)}</td>
+      <td><span class="${BADGE[st] || 'badge'}" title="${esc(r.paypal?.error || (r.paypal?.id ? 'On PayPal' : ''))}">${esc(st.replace(/_/g, ' '))}</span>${r.paypal?.id ? ' <span class="text-[11px] text-link">PayPal</span>' : ''}</td>
+      <td class="hidden whitespace-nowrap text-xs text-soft xl:table-cell">${r.dueDate && OPEN(st) ? esc(fmtDate(r.dueDate)) : ''}</td>
+      <td class="space-x-1 whitespace-nowrap text-right"><button class="btn-ghost !min-h-8" data-i="${i}" data-do="view">View</button>${refresh}${action}</td>
     </tr>`;
   }).join('');
 }
@@ -310,9 +306,11 @@ function renderVat() {
 
 async function renderChain() {
   const v = await verifyChain(state.records);
-  $('#chain').innerHTML = v.ok
-    ? `<span class="text-emerald-300">● Chain verified</span> <span class="text-slate-400">${v.count} record${v.count === 1 ? '' : 's'}, SHA-256 linked</span>`
-    : `<span class="text-rose-300">● Chain broken at ${esc(state.records[v.index].number)}</span> <span class="text-slate-400">${esc(v.reason)}</span>`;
+  $('#chainStatus').innerHTML = !state.records.length
+    ? '<span class="text-soft">● Empty chain</span>'
+    : v.ok
+      ? `<span class="text-ok">● Chain verified</span> <span class="text-soft">· ${v.count} record${v.count === 1 ? '' : 's'} · SHA-256 linked</span>`
+      : `<span class="text-bad">● Chain broken at ${esc(state.records[v.index].number)}</span> <span class="text-soft">· ${esc(v.reason)}</span>`;
 }
 
 function renderPlan() {
@@ -327,7 +325,9 @@ function renderPlan() {
 }
 
 async function renderAll() {
-  $('#company').textContent = `${state.company.name} · NIF ${state.company.nif} · series ${state.company.series}`;
+  const company = `${state.company.name} · NIF ${state.company.nif} · series ${state.company.series}`;
+  $('#company').textContent = company;
+  $('#menuCompany').textContent = company;
   renderKpis();
   renderChat();
   renderInvoices();
@@ -353,43 +353,43 @@ function download(name, text, type) {
 }
 
 function chainFacts(r) {
-  return `<div><div class="text-slate-400">Record hash (SHA-256)</div><div class="font-mono break-all">${esc(r.hash)}</div></div>
-    <div><div class="text-slate-400">Previous record</div><div class="font-mono break-all">${r.prev ? esc(`${r.prev.number} · ${r.prev.hash}`) : 'First record in the chain'}</div></div>
-    <div><div class="text-slate-400">Generated</div><div class="font-mono">${esc(r.generatedAt)}</div></div>`;
+  return `<div><div class="text-soft">Record hash (SHA-256)</div><div class="num break-all">${esc(r.hash)}</div></div>
+    <div><div class="text-soft">Previous record</div><div class="num break-all">${r.prev ? esc(`${r.prev.number} · ${r.prev.hash}`) : 'First record in the chain'}</div></div>
+    <div><div class="text-soft">Generated</div><div class="num">${esc(r.generatedAt)}</div></div>`;
 }
 
 function openDetail(r) {
-  const xmlBlock = `<details><summary class="cursor-pointer text-slate-300">${isAnulacion(r) ? 'RegistroAnulacion' : 'RegistroAlta'} XML</summary><pre class="mt-2 max-h-56 overflow-auto whitespace-pre-wrap break-all rounded bg-black/40 p-2 text-[10px]">${esc(recordXml(r))}</pre></details>`;
+  const xmlBlock = `<details><summary class="cursor-pointer text-fg/80">${isAnulacion(r) ? 'RegistroAnulacion' : 'RegistroAlta'} XML</summary><pre class="mt-2 max-h-56 overflow-auto whitespace-pre-wrap break-all rounded bg-ink p-2 text-[10px]">${esc(recordXml(r))}</pre></details>`;
   const closeBtns = '<div class="flex flex-wrap gap-2"><button class="btn-ghost" data-dl="xml">Download XML</button><button class="btn-primary" data-dl="close">Close</button></div>';
   if (isAnulacion(r)) {
     $('#dlgBody').innerHTML = `<div class="max-w-xl space-y-3 text-xs"><div class="text-base font-semibold">Cancellation of ${esc(r.number)}</div>
-      <p class="text-slate-400">A RegistroAnulacion identifies the cancelled invoice and is chained like any other record. The original invoice stays in the ledger untouched.${r.reason ? ` Reason: ${esc(r.reason)}.` : ''}</p>${chainFacts(r)}${xmlBlock}${closeBtns}</div>`;
+      <p class="text-soft">A RegistroAnulacion identifies the cancelled invoice and is chained like any other record. The original invoice stays in the ledger untouched.${r.reason ? ` Reason: ${esc(r.reason)}.` : ''}</p>${chainFacts(r)}${xmlBlock}${closeBtns}</div>`;
   } else {
     const st = status(r);
     const rows = (r.lines || []).map((l) => `<tr class="border-t border-black/10"><td class="py-1 pr-2">${esc(l.description)}</td><td class="pr-2 text-right">${l.qty}</td><td class="pr-2 text-right">${eur(l.price)}</td><td class="text-right">${l.vat}%</td></tr>`).join('');
-    const pay = r.paypal?.id ? `${esc(r.paypal.status)}${safeUrl(r.paypal.payerUrl) ? ` · <a class="text-indigo-300 underline" href="${esc(r.paypal.payerUrl)}" target="_blank" rel="noopener noreferrer">payer page</a>` : ''}` : r.paidAt ? `Paid by ${esc(METHOD[r.paidMethod] || 'transfer')} on ${esc(fmtDate(r.paidAt))}` : 'Not on PayPal';
-    const manage = OPEN(st) ? `<div class="space-y-2 rounded-lg border border-white/10 p-2"><div class="text-slate-400">Manage</div>
+    const pay = r.paypal?.id ? `${esc(r.paypal.status)}${safeUrl(r.paypal.payerUrl) ? ` · <a class="text-link underline" href="${esc(r.paypal.payerUrl)}" target="_blank" rel="noopener noreferrer">payer page</a>` : ''}` : r.paidAt ? `Paid by ${esc(METHOD[r.paidMethod] || 'transfer')} on ${esc(fmtDate(r.paidAt))}` : 'Not on PayPal';
+    const manage = OPEN(st) ? `<div class="space-y-2 rounded-lg border border-white/10 p-2"><div class="text-soft">Manage</div>
       <div class="flex flex-wrap gap-2"><select id="payMethod" class="field !w-auto !py-1 text-xs" aria-label="Payment method"><option value="BANK_TRANSFER">Bank transfer</option><option value="CASH">Cash</option><option value="OTHER">Other</option></select><button class="btn-ghost" data-dl="paid">Mark paid</button></div>
-      <div class="flex flex-wrap gap-2"><input id="cancelReason" class="field !w-auto flex-1 !py-1 text-xs" maxlength="200" placeholder="Reason, e.g. duplicate" aria-label="Cancellation reason"><button class="btn-ghost text-rose-200" data-dl="cancel">Cancel invoice</button></div></div>` : '';
+      <div class="flex flex-wrap gap-2"><input id="cancelReason" class="field !w-auto flex-1 !py-1 text-xs" maxlength="200" placeholder="Reason, e.g. duplicate" aria-label="Cancellation reason"><button class="btn-ghost btn-danger" data-dl="cancel">Cancel invoice</button></div></div>` : '';
     $('#dlgBody').innerHTML = `
     <div class="grid gap-5 md:grid-cols-[1fr_260px]">
-      <div class="rounded-xl bg-white p-5 text-slate-900">
+      <div class="rounded-xl bg-paper p-5 text-paper-ink">
         <div class="flex justify-between gap-4">
-          <div><div class="text-lg font-bold">${esc(r.issuerName)}</div><div class="text-xs text-slate-500">NIF ${esc(r.nif)}</div></div>
-          <div class="text-right"><div class="text-xs text-slate-500">Invoice${st === 'CANCELLED' ? ' · CANCELLED' : ''}</div><div class="font-mono font-semibold">${esc(r.number)}</div><div class="text-xs text-slate-500">${esc(r.date)}${r.dueDate ? ` · due ${esc(fmtDate(r.dueDate))}` : ''}</div></div>
+          <div><div class="text-lg font-bold">${esc(r.issuerName)}</div><div class="text-xs text-paper-soft">NIF ${esc(r.nif)}</div></div>
+          <div class="text-right"><div class="text-xs text-paper-soft">Invoice${st === 'CANCELLED' ? ' · CANCELLED' : ''}</div><div class="font-mono font-semibold">${esc(r.number)}</div><div class="text-xs text-paper-soft">${esc(r.date)}${r.dueDate ? ` · due ${esc(fmtDate(r.dueDate))}` : ''}</div></div>
         </div>
-        <div class="mt-4 text-sm"><div class="text-xs text-slate-500">Bill to</div><div class="font-medium">${esc(r.recipient?.name)}</div>${r.recipient?.nif ? `<div class="text-xs text-slate-500">NIF ${esc(r.recipient.nif)}</div>` : ''}</div>
-        <table class="mt-4 w-full text-sm"><thead class="text-xs text-slate-500"><tr><th class="text-left">Description</th><th class="text-right">Qty</th><th class="text-right">Price</th><th class="text-right">VAT</th></tr></thead><tbody>${rows}</tbody></table>
-        <div class="mt-3 space-y-0.5 text-right text-sm">${r.breakdown.map((b) => `<div class="text-slate-500">Base ${b.rate}%: ${eur(b.base)} · VAT ${eur(b.tax)}</div>`).join('')}<div class="text-base font-bold">Total ${eur(r.total)}</div></div>
+        <div class="mt-4 text-sm"><div class="text-xs text-paper-soft">Bill to</div><div class="font-medium">${esc(r.recipient?.name)}</div>${r.recipient?.nif ? `<div class="text-xs text-paper-soft">NIF ${esc(r.recipient.nif)}</div>` : ''}</div>
+        <table class="mt-4 w-full text-sm"><thead class="text-xs text-paper-soft"><tr><th class="text-left">Description</th><th class="text-right">Qty</th><th class="text-right">Price</th><th class="text-right">VAT</th></tr></thead><tbody>${rows}</tbody></table>
+        <div class="mt-3 space-y-0.5 text-right text-sm">${r.breakdown.map((b) => `<div class="text-paper-soft">Base ${b.rate}%: ${eur(b.base)} · VAT ${eur(b.tax)}</div>`).join('')}<div class="text-base font-bold">Total ${eur(r.total)}</div></div>
         <div class="mt-4 flex items-end gap-3 border-t border-black/10 pt-3">
           <div class="w-28 shrink-0">${qrSvg(r.qr)}<div class="text-center text-[10px] font-bold tracking-wider">VERI*FACTU</div></div>
-          <div class="break-all text-[10px] text-slate-500">Invoice verifiable at the Spanish Tax Agency (AEAT test service).<br>${esc(r.qr)}</div>
+          <div class="break-all text-[10px] text-paper-soft">Invoice verifiable at the Spanish Tax Agency (AEAT test service).<br>${esc(r.qr)}</div>
         </div>
       </div>
       <div class="min-w-0 space-y-3 text-xs">
-        <div><div class="text-slate-400">Status</div><span class="${BADGE[st] || 'badge'}">${esc(st.replace(/_/g, ' '))}</span></div>
+        <div><div class="text-soft">Status</div><span class="${BADGE[st] || 'badge'}">${esc(st.replace(/_/g, ' '))}</span></div>
         ${chainFacts(r)}
-        <div><div class="text-slate-400">Payment</div><div>${pay}</div></div>
+        <div><div class="text-soft">Payment</div><div>${pay}</div></div>
         ${manage}${xmlBlock}${closeBtns}
       </div>
     </div>`;
@@ -530,10 +530,39 @@ $('#sample').onclick = async () => {
 $('#reset').onclick = async () => {
   if (!window.confirm('Delete all demo invoices and start with an empty ledger?')) return;
   tampered = null;
+  $('#tamper').textContent = 'Tamper test';
   state = fresh();
   save();
   await renderAll();
 };
+
+// Overflow menu in the top bar: sample quarter, empty ledger and the exports.
+const menu = $('#menu');
+const menuBtn = $('#menuBtn');
+const menuItems = () => [...menu.querySelectorAll('[role="menuitem"]')];
+const setMenu = (open) => {
+  menu.hidden = !open;
+  menuBtn.setAttribute('aria-expanded', String(open));
+};
+menuBtn.onclick = () => {
+  setMenu(menu.hidden);
+  if (!menu.hidden) menuItems()[0].focus();
+};
+document.addEventListener('click', (ev) => { if (!menu.hidden && !ev.target.closest('#menu, #menuBtn')) setMenu(false); });
+menu.addEventListener('click', (ev) => { if (ev.target.closest('[role="menuitem"]')) setMenu(false); });
+menu.addEventListener('keydown', (ev) => {
+  const items = menuItems();
+  const at = items.indexOf(document.activeElement);
+  const to = { ArrowDown: (at + 1) % items.length, ArrowUp: (at - 1 + items.length) % items.length, Home: 0, End: items.length - 1 }[ev.key];
+  if (to === undefined) return;
+  ev.preventDefault();
+  items[to].focus();
+});
+document.addEventListener('keydown', (ev) => {
+  if (ev.key !== 'Escape' || menu.hidden) return;
+  setMenu(false);
+  menuBtn.focus();
+});
 
 // Pricing: Cuadra's own plans are PayPal Subscriptions, created server-side and approved on PayPal.
 document.querySelectorAll('[data-plan]').forEach((b) => b.addEventListener('click', async () => {
