@@ -41,6 +41,7 @@
   <main class="mx-auto max-w-3xl px-4 pb-10 pt-3">
     <h1 class="no-print sr-only">Invoice verification</h1>
     <div id="verdict" class="verdict no-print" role="status" aria-live="polite" data-state="checking">Checking the record…</div>
+    <div id="attest" class="verdict no-print mt-2 !px-3 !py-2 !text-xs" role="status" data-state="info" hidden></div>
     <div class="no-print mt-3 flex flex-wrap items-center gap-2">
       <button id="print" class="btn-primary" disabled>Print / Save as PDF</button>
       <span class="text-xs text-soft">Use "Save as PDF" in the print dialog to keep a copy.</span>
@@ -48,7 +49,7 @@
 
     <div id="paper" class="sheet mt-4" hidden></div>
 
-    <p class="no-print mt-4 text-xs leading-relaxed text-soft">Generated from the issuer's ledger copy. For legal effect, scan the AEAT QR. Nothing is sent to any server: the record travels in the part of the link after the <span class="num">#</span>, which browsers keep to themselves.</p>
+    <p class="no-print mt-4 text-xs leading-relaxed text-soft">Generated from the issuer's ledger copy. For legal effect, scan the AEAT QR. The record is never sent to any server: it travels in the part of the link after the <span class="num">#</span>, which browsers keep to themselves.</p>
     <details class="no-print mt-3 text-xs leading-relaxed text-soft">
       <summary class="cursor-pointer text-fg/80">What does this check?</summary>
       <p class="mt-2">This page rebuilds the record from the link and recomputes its SHA-256 hash with the field order of the AEAT specification: issuer NIF, invoice number, date, invoice type, VAT total, total, hash of the previous record and generation time. It also recomputes the totals from the invoice lines and compares the link to the previous record. Client names and descriptions are not part of the VeriFactu hash, and the page cannot know whether the invoice was cancelled later: the AEAT QR code is what the tax agency checks.</p>

@@ -4,6 +4,7 @@
 // payer link that passes safeUrl(), so a hostile record cannot make the page show or encode anything else.
 import { isAnulacion, money, qrUrl } from './verifactu.js';
 import { settlementOf, refundNote } from './ledger.js';
+import { attestWords } from './attest.js';
 import { esc, eur, fmtDate, safeUrl } from './fmt.js';
 
 const num = (v) => `<span class="num">${esc(v)}</span>`;
@@ -12,11 +13,19 @@ function qrFigure(svg, title, hint) {
   return `<figure class="doc-qr"><div class="doc-qr-img">${svg || '<div class="doc-qr-missing">QR unavailable</div>'}</div><figcaption><b>${esc(title)}</b>${hint ? `<br>${esc(hint)}` : ''}</figcaption></figure>`;
 }
 
-const chainFoot = (r, check) => `<footer class="doc-foot-text">
+// The signature line of the footer. attest: the result of checkAttestation() ({ state, keyId, signedAt }); null leaves the line out.
+export const attestLineHtml = (attest) => {
+  if (!attest) return '';
+  const w = attest.state === 'checking' ? { tone: 'info', text: 'Checking the signature…' } : attestWords(attest);
+  return `<div class="${w.tone === 'ok' ? 'doc-check is-ok' : w.tone === 'bad' ? 'doc-check is-bad' : 'doc-note'}" data-attest="${esc(attest.state)}">${esc(w.text)}</div>`;
+};
+
+const chainFoot = (r, check, attest) => `<footer class="doc-foot-text">
   <div><span class="doc-label">Hash SHA-256</span><div class="num doc-hash">${esc(r.hash)}</div></div>
   <div><span class="doc-label">Registro anterior / Previous record</span><div class="num doc-hash">${r.prev ? esc(`${r.prev.number} · ${r.prev.hash}`) : 'Primer registro de la cadena / First record in the chain'}</div></div>
   <div><span class="doc-label">Generado / Generated</span><div class="num doc-hash">${esc(r.generatedAt)}</div></div>
   ${check ? `<div class="doc-check ${check.ok ? 'is-ok' : 'is-bad'}">${check.ok ? 'Hash check in the browser: matches' : 'Hash check in the browser: DOES NOT MATCH'}${check.at ? ` · ${esc(check.at)}` : ''}</div>` : ''}
+  ${attestLineHtml(attest)}
 </footer>`;
 
 // Corrective invoices only, and only where the ledger knows what was paid: what the client paid on the original and what is left.
@@ -28,7 +37,7 @@ const settle = (r) => {
 
 // r: a record (live from the ledger, or rebuilt by share.js). opts.qr: text -> SVG string. opts.stamp: a word printed
 // across the document ("CANCELLED", "ALTERED"). opts.check: { ok, at } adds the hash-check line to the footer.
-export function renderDocument(r, { qr = () => '', stamp = '', check = null } = {}) {
+export function renderDocument(r, { qr = () => '', stamp = '', check = null, attest = null } = {}) {
   const stampHtml = stamp ? `<div class="doc-stamp" aria-hidden="true">${esc(stamp)}</div>` : '';
   if (isAnulacion(r)) {
     return `<article class="doc" aria-label="Cancellation record of ${esc(r.number)}">${stampHtml}
@@ -38,7 +47,7 @@ export function renderDocument(r, { qr = () => '', stamp = '', check = null } = 
       </header>
       <section class="doc-party"><div class="doc-label">Factura anulada / Cancelled invoice</div><div class="doc-name num">${esc(r.number)}</div><div class="doc-meta">Issued ${num(r.date)} by NIF ${num(r.nif)}</div>${r.reason ? `<div class="doc-meta">Motivo / Reason: ${esc(r.reason)}</div>` : ''}</section>
       <p class="doc-note">A RegistroAnulacion identifies the cancelled invoice and is chained like any other record. The original invoice stays in the ledger untouched.</p>
-      ${chainFoot(r, check)}
+      ${chainFoot(r, check, attest)}
     </article>`;
   }
   const lines = (r.lines || []).map((l) => `<tr><td>${esc(l.description)}</td><td class="num text-right">${esc(l.qty)}</td><td class="num text-right">${eur(l.price)}</td><td class="num text-right">${esc(l.vat)} %</td><td class="num text-right">${eur(Number(money(l.qty * l.price)))}</td></tr>`).join('');
@@ -67,6 +76,6 @@ export function renderDocument(r, { qr = () => '', stamp = '', check = null } = 
       ${payer ? qrFigure(qr(payer), 'Pay with PayPal', 'Scan to pay online') : ''}
       <p class="doc-note">Invoice verifiable at the Spanish Tax Agency (AEAT test service). Scan the first QR code to check it.</p>
     </footer>
-    ${chainFoot(r, check)}
+    ${chainFoot(r, check, attest)}
   </article>`;
 }

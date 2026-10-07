@@ -1,4 +1,5 @@
 import { llmConfig } from '../lib/llm.js';
+import { attestKey } from '../lib/attest.js';
 
 // GET /api/health: liveness for Render and uptime checks. Reports which integrations are configured, never their values.
 export default function handler(req, res) {
@@ -8,6 +9,7 @@ export default function handler(req, res) {
     mode: e.MOCK === '1' ? 'mock' : e.PAYPAL_ENV === 'live' ? 'live' : 'sandbox',
     ai: Boolean(llmConfig()) || e.MOCK === '1',
     paypal: Boolean(e.PAYPAL_CLIENT_ID && e.PAYPAL_CLIENT_SECRET) || e.MOCK === '1',
+    attestation: Boolean(attestKey()),
     subscriptions: Boolean(e.PAYPAL_PLAN_PRO && e.PAYPAL_PLAN_TEAM) || e.MOCK === '1',
   };
   res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });

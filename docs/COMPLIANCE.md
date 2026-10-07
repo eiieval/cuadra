@@ -24,6 +24,7 @@ Cuadra is a demo of a VeriFactu-ready invoicing agent. It is **not a certified i
 ## What it does not do
 
 - **No electronic signature** of the records, and **no submission** to the AEAT web service (neither the VERI*FACTU online mode nor a non-VERI*FACTU deployment with signed records). The QR points at the AEAT **test** verification service, so a scanned demo invoice is not found there.
+- **The signed attestation is not that signature.** When a deployment has an Ed25519 key (`ATTEST_PRIVATE_KEY`), it signs the hash of each record it sees being issued, and the verification page checks it ( "Signed by this Cuadra deployment" or "Unsigned copy"). It proves that this deployment saw that hash at that moment; it does not prove who the issuer is and it is not the electronic signature the regulation asks for.
 - **The XML is not validated against the XSD.** The structure follows the published `SuministroInformacion` schema (including `FacturasRectificadas` and `ImporteRectificacion`), but the demo does not run a validator, and the system declaration (`SistemaInformatico`) is a placeholder.
 - **No certification.** There is no declaración responsable of the producer, no conformity statement, no certified software identifier.
 - **The web ledger is in the browser.** Clearing site data erases it. The MCP server keeps a local file. Neither is a retained, backed-up register.

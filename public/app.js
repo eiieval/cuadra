@@ -10,9 +10,10 @@ import { engineChecks, checksHtml, blockers, boundsProblems } from './js/checks.
 import { normalizeProposal as normalize, normalizeRectify, proposalPaperHtml, proposalActionsHtml } from './js/proposal.js';
 import { detectLang, synthReply } from './js/say.js';
 import { planButton, plansConfigured } from './js/plans.js';
+import { attestPayload, checkAttestation, fetchAttestKey, attestWords } from './js/attest.js';
 import { isPlan, planProgress, planSummary, pendingLowRisk, hasHighRisk } from './js/plan.js';
 import { reduceActivity, activityRows, activityHtml } from './js/activity.js';
-import { renderDocument } from './js/document.js';
+import { renderDocument, attestLineHtml } from './js/document.js';
 import { qrSvg } from './js/qr.js';
 import { sanitizeRecord, shareable, shareUrl, verifyRecord } from './js/share.js';
 import { startTour, tourSeen } from './js/tour.js';
@@ -90,6 +91,23 @@ const log = (actor, event, number = '', detail = '') => { state.activity = reduc
 const saveIndex = () => { try { localStorage.setItem(INDEX_KEY, JSON.stringify(index)); } catch { /* storage unavailable */ } };
 const save = () => { if (tampered) return; try { localStorage.setItem(ledgerKey(state.company.nif, index.primary), JSON.stringify(state)); } catch { /* storage unavailable */ } };
 const manyCompanies = () => index.list.length > 1;
+
+// Signed attestation: right after a record is issued the deployment signs its hash (api/attest.js). When it has no key,
+// or anything goes wrong, the record simply stays unsigned: no error, the UI says "Unsigned copy".
+async function attest(rec) {
+  if (!(await fetchAttestKey())) return;
+  const r = await post('/api/attest', attestPayload(rec));
+  if (r.error || !r.signature) return;
+  rec.attestation = { signature: r.signature, keyId: r.keyId, signedAt: r.signedAt };
+  log('system', 'attested', rec.number, `Hash signed by this Cuadra deployment · key ${r.keyId}`);
+}
+let attestedHashes = new Set(); // hashes whose signature verified in this browser: the shield in the chain
+async function refreshAttested() {
+  const key = await fetchAttestKey();
+  const next = new Set();
+  for (const r of state.records) if (r.attestation && (await checkAttestation(r, key)).state === 'signed') next.add(r.hash);
+  attestedHashes = next;
+}
 
 async function post(url, body) {
   try {
@@ -177,6 +195,7 @@ async function issue(inv, withPaypal) {
   chainFx = { newFrom: state.records.length - 1 };
   flash = { number, at: Date.now() };
   log('system', 'issued', number, `VeriFactu record chained · hash ${rec.hash.slice(0, 6)}…`);
+  await attest(rec);
   save();
   closeSheet(); // on a phone the sheet gets out of the way, so the new block is seen entering the chain
   $('#chainStrip').scrollIntoView({ behavior: reducedMotion() ? 'auto' : 'smooth', block: 'nearest' });
@@ -290,6 +309,7 @@ async function rectify(rec, args) {
   const diff = Number(money(Number(record.total) - Number(rec.total)));
   const set = settlementOf(record);
   log('system', 'rectified', number, `R1 rectifies ${rec.number} · hash ${record.hash.slice(0, 6)}…`);
+  await attest(record);
   save();
   closeSheet();
   $('#chainStrip').scrollIntoView({ behavior: reducedMotion() ? 'auto' : 'smooth', block: 'nearest' });
@@ -659,11 +679,12 @@ function renderVat() {
 // a 1.2 s sweep then re-checks them visually from left to right; the header says "Verifying" until it ends.
 const SWEEP_MS = 1200;
 const reducedMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
-const chainSignature = () => `${state.records.length}|${state.records.at(-1)?.hash || ''}|${tampered ? tampered.i : ''}`;
+const chainSignature = () => `${state.records.length}|${state.records.at(-1)?.hash || ''}|${tampered ? tampered.i : ''}|${attestedHashes.size}`;
 
 async function renderChain() {
   const run = ++chainRun;
   const v = await verifyChain(state.records);
+  await refreshAttested();
   if (run !== chainRun) return; // a newer render superseded this one
   const track = $('#chainTrack');
   chainVerdict = v;
@@ -674,7 +695,7 @@ async function renderChain() {
     chainSig = sig;
     const motion = !reducedMotion();
     const left = track.scrollLeft;
-    track.innerHTML = chainTrackHtml(chainBlocks(state.records, v, { newFrom: chainFx?.newFrom ?? Infinity }));
+    track.innerHTML = chainTrackHtml(chainBlocks(state.records, v, { newFrom: chainFx?.newFrom ?? Infinity, attested: attestedHashes }));
     chainFx = null;
     track.classList.toggle('sweeping', motion);
     const items = [...track.querySelectorAll('.chain-block')];
@@ -876,7 +897,7 @@ function openDetail(r) {
   const rectBox = !anul && st === 'PAID' ? `<div class="space-y-2 rounded-lg border border-line p-2"><div class="text-soft">Paid invoice with a mistake?</div><div class="text-soft">It is never edited. A corrective invoice (R1) replaces it in the chain.</div><button class="btn-ghost" data-dl="rectify">Issue corrective invoice</button></div>`
     : byR1 ? `<div class="rounded-lg border border-line p-2"><div class="text-soft">Rectified by</div><button class="link num" data-view-rec="${esc(byR1.number)}">${esc(byR1.number)}</button> <span class="text-soft">(R1, substitution)</span></div>` : '';
   $('#dlgBody').innerHTML = `<div class="grid gap-5 lg:grid-cols-[minmax(0,1fr)_17.5rem]">
-    ${renderDocument(r, { qr: qrSvg, stamp: st === 'CANCELLED' ? 'Cancelled' : st === 'RECTIFIED' ? 'Rectified' : '' })}
+    ${renderDocument(r, { qr: qrSvg, stamp: st === 'CANCELLED' ? 'Cancelled' : st === 'RECTIFIED' ? 'Rectified' : '', attest: anul ? null : { state: r.attestation ? 'checking' : 'unsigned' } })}
     <div class="min-w-0 space-y-3 text-xs">
       <div id="dlgVerdict" class="verdict !px-3 !py-2 !text-xs" data-state="checking" role="status">Checking the record…</div>
       ${anul ? '' : `<div><div class="text-soft">Status</div><span class="${BADGE[st] || 'badge'}">${esc(st.replace(/_/g, ' '))}</span></div><div><div class="text-soft">Payment</div><div>${pay}</div></div>`}
@@ -892,6 +913,10 @@ function openDetail(r) {
     el.dataset.state = v.ok ? 'ok' : 'bad';
     el.innerHTML = v.ok ? `<span class="verdict-mark" aria-hidden="true">✓</span> Consistent copy: matches its hash <span class="num">${esc(v.hash.slice(0, 8))}…</span>` : `<span class="verdict-mark" aria-hidden="true">✗</span> Altered: ${esc(v.reason)}`;
     if (!v.ok) body.querySelector('.doc')?.insertAdjacentHTML('afterbegin', '<div class="doc-stamp" aria-hidden="true">Altered</div>');
+    if (r.attestation) fetchAttestKey().then((key) => checkAttestation(r, key)).then((a) => {
+      const line = body.querySelector('[data-attest]');
+      if (line) line.outerHTML = attestLineHtml(a);
+    });
   }).catch(() => {
     const el = body.querySelector('#dlgVerdict');
     if (el) { el.dataset.state = 'bad'; el.textContent = 'This record could not be checked.'; }

@@ -16,6 +16,7 @@ export const EVENTS = {
   payment: 'Payment recorded',
   cancelled: 'Cancelled',
   rectified: 'Corrective invoice issued',
+  attested: 'Signed by this deployment',
   sync: 'PayPal status changed',
   tamper_on: 'Tamper test on',
   tamper_off: 'Tamper test off',

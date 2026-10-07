@@ -11,6 +11,7 @@ const routes = {
   '/api/agent': (await import('./api/agent.js')).default,
   '/api/paypal': (await import('./api/paypal.js')).default,
   '/api/paypal-webhook': (await import('./api/paypal-webhook.js')).default,
+  '/api/attest': (await import('./api/attest.js')).default,
   '/api/health': (await import('./api/health.js')).default,
 };
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.txt': 'text/plain; charset=utf-8', '.xml': 'application/xml' };

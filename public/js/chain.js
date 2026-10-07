@@ -18,7 +18,7 @@ const TIPS = {
 // it runs (every block is then 'pending': a block is never shown as verified without a verdict).
 // opts.newFrom: records at or after this index are flagged isNew (they just entered the chain).
 // With more than `max` records the oldest collapse into one "+N earlier" block, so the strip never exceeds `max` items.
-export function chainBlocks(records, verify, { newFrom = Infinity, max = MAX_BLOCKS } = {}) {
+export function chainBlocks(records, verify, { newFrom = Infinity, max = MAX_BLOCKS, attested = new Set() } = {}) {
   const n = records.length;
   const known = Boolean(verify);
   const bad = known && verify.ok === false ? verify.index : -1;
@@ -44,14 +44,14 @@ export function chainBlocks(records, verify, { newFrom = Infinity, max = MAX_BLO
       else linkIn = 'unverifiable';
     }
     const hash = String(r.hash || '');
-    const base = { kind: isAnulacion(r) ? 'anulacion' : isRectificativa(r) ? 'rectificativa' : 'alta', index: i, number: String(r.number || ''), state, linkIn, hash, hash6: hash.slice(0, 6), isNew: i >= newFrom };
+    const base = { kind: isAnulacion(r) ? 'anulacion' : isRectificativa(r) ? 'rectificativa' : 'alta', index: i, number: String(r.number || ''), state, linkIn, hash, hash6: hash.slice(0, 6), isNew: i >= newFrom, attested: state === 'verified' && attested.has(hash) };
     out.push(isAnulacion(r)
       ? { ...base, amount: null, cancels: base.number, tip: '' }
       : { ...base, amount: String(r.total ?? ''), cancels: null, rectifies: isRectificativa(r) ? String(r.rectifies.number) : null, refund: refundNote(r), tip: '' });
     out.at(-1).tip = state === 'broken' ? TIPS[verify.reason] || verify.reason
       : state === 'unverifiable' ? `Not verifiable: the chain is broken at ${brokenNumber}`
         : state === 'pending' ? 'Verifying…'
-          : `${base.number}${out.at(-1).rectifies ? ` · R1 · rectifies ${out.at(-1).rectifies}` : ''} · SHA-256 ${base.hash6}… · verified${out.at(-1).refund ? ` · ${out.at(-1).refund}` : ''}`;
+          : `${base.number}${out.at(-1).rectifies ? ` · R1 · rectifies ${out.at(-1).rectifies}` : ''} · SHA-256 ${base.hash6}… · verified${out.at(-1).attested ? ' · signed by this deployment' : ''}${out.at(-1).refund ? ` · ${out.at(-1).refund}` : ''}`;
   }
   return out;
 }
@@ -82,6 +82,7 @@ const MARK = {
   unverifiable: SVG('<path d="M4 8h8"/>', 'block-mark'),
   pending: SVG('<circle cx="8" cy="8" r="2.5"/>', 'block-mark'),
 };
+const SHIELD = SVG('<path d="M8 1.8 13 3.6v3.9c0 3.1-2 5.2-5 6.7-3-1.5-5-3.6-5-6.7V3.6z"/><path d="M5.6 8.1l1.8 1.8 3-3.3"/>', 'block-mark');
 const LINK = {
   verified: '<svg class="chain-link-svg" viewBox="0 0 26 14" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="1.5" y="3.5" width="14" height="7" rx="3.5"/><rect x="10.5" y="3.5" width="14" height="7" rx="3.5"/></svg>',
   unverifiable: '<svg class="chain-link-svg" viewBox="0 0 26 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-dasharray="2.5 2"><rect x="1.5" y="3.5" width="14" height="7" rx="3.5"/><rect x="10.5" y="3.5" width="14" height="7" rx="3.5"/></svg>',
@@ -104,9 +105,9 @@ function blockHtml(b) {
   const label = b.kind === 'anulacion' ? `Cancels ${b.cancels}, cancellation record`
     : b.kind === 'rectificativa' ? `${b.number}, R1 corrective invoice, rectifies ${b.rectifies}, ${eur(b.amount)}` : `${b.number}, invoice, ${eur(b.amount)}`;
   const rect = b.kind === 'rectificativa' ? `<span class="num text-[11px] text-soft block-rect" aria-hidden="true">← ${esc(b.rectifies)}</span>` : '';
-  return `<li class="chain-item">${link}<button type="button" class="chain-block ${b.kind} ${b.state}${b.isNew ? ' is-new' : ''}" data-i="${b.index}" title="${esc(b.tip)}" aria-label="${esc(`${label}, hash ${b.hash6}, ${WORD[b.state]}. Open details.`)}">
+  return `<li class="chain-item">${link}<button type="button" class="chain-block ${b.kind} ${b.state}${b.isNew ? ' is-new' : ''}" data-i="${b.index}" title="${esc(b.tip)}" aria-label="${esc(`${label}, hash ${b.hash6}, ${WORD[b.state]}${b.attested ? ', signed by this Cuadra deployment' : ''}. Open details.`)}">
     <span class="block-top">${icon}${head}</span>${body}${rect}
-    <span class="block-foot"><span class="num text-soft">${esc(b.hash6)}</span>${MARK[b.state]}</span>
+    <span class="block-foot"><span class="num text-soft">${esc(b.hash6)}</span>${b.attested ? `<span class="text-link" title="Signed by this Cuadra deployment">${SHIELD}</span>` : ''}${MARK[b.state]}</span>
   </button></li>`;
 }
 

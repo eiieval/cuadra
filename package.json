@@ -11,6 +11,7 @@
     "mcp:demo": "node scripts/mcp-demo.js",
     "test": "node scripts/test.js && node scripts/ui-test.js && node scripts/mcp-test.js && node scripts/schema-test.js",
     "paypal:setup": "node scripts/paypal-setup.js",
+    "attest:keygen": "node scripts/attest-keygen.js",
     "build:css": "npx -y tailwindcss@3 -c tailwind.config.cjs -i styles/input.css -o public/styles.css --minify",
     "shots": "node scripts/shots.js",
     "social": "node scripts/social-card.js"

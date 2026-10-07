@@ -268,6 +268,60 @@ expect('per-IP rate limit kicks in (429)', last === 429);
   resetGuard();
 }
 
+// Signed attestation (W1): /api/attest signs the hash of a record with an Ed25519 key from the environment
+{
+  const { default: attest } = await import('../api/attest.js');
+  const { default: health } = await import('../api/health.js');
+  const { attestKey, parsePrivateKey } = await import('../lib/attest.js');
+  const { checkAttestation, attestPayload, attestMessage, fromB64Url } = await import('../public/js/attest.js');
+  const { generateKeyPairSync, randomBytes } = await import('node:crypto');
+  const { resetGuard } = await import('../lib/guard.js');
+  resetGuard();
+  const fresh = async (over = {}) => buildAlta({ issuer, invoice: { number: 'AT-0001', date: '2026-10-07', recipient: { name: 'Acme', nif: 'B12345674' }, lines: [{ description: 'Work', qty: 1, price: 100, vat: 21 }], ...over }, prev: null });
+  const rec = await fresh();
+  const askKey = await call(attest, { method: 'GET' });
+  expect('attest GET returns the public key (Ed25519, 32 raw bytes, key id) and nothing private', askKey.status === 200 && askKey.json.enabled === true && askKey.json.algorithm === 'Ed25519' && fromB64Url(askKey.json.publicKey).length === 32 && /^[0-9a-f]{16}$/.test(askKey.json.keyId) && askKey.json.mode === 'mock' && !/private|seed/i.test(JSON.stringify(askKey.json)));
+  const signed = await call(attest, { headers: { 'x-forwarded-for': '11.0.0.1' }, body: attestPayload(rec) });
+  expect('attest POST signs the hash of a fresh record and returns { signature, keyId, signedAt }', signed.status === 200 && fromB64Url(signed.json.signature).length === 64 && signed.json.keyId === askKey.json.keyId && /^\d{4}-\d{2}-\d{2}T/.test(signed.json.signedAt));
+  const withSig = { ...rec, attestation: signed.json };
+  expect('sign/verify round trip: the signature verifies in WebCrypto with the published public key (state signed)', (await checkAttestation(withSig, askKey.json)).state === 'signed');
+  expect('a signature for another hash, a changed date or another key does not verify (invalid / unchecked)', (await checkAttestation({ ...withSig, hash: 'A'.repeat(64) }, askKey.json)).state === 'invalid' && (await checkAttestation({ ...withSig, attestation: { ...signed.json, signedAt: '2026-01-01T00:00:00.000Z' } }, askKey.json)).state === 'invalid' && (await checkAttestation(withSig, { ...askKey.json, keyId: '0'.repeat(16) })).state === 'unchecked' && (await checkAttestation(rec, askKey.json)).state === 'unsigned' && (await checkAttestation(withSig, null)).state === 'unchecked');
+  expect('a tampered record is rejected: the server recomputes the hash and it must match (changed total, changed hash)', (await call(attest, { headers: { 'x-forwarded-for': '11.0.0.2' }, body: { ...attestPayload(rec), total: '999.00' } })).status === 400 && (await call(attest, { headers: { 'x-forwarded-for': '11.0.0.2' }, body: { ...attestPayload(rec), hash: '0'.repeat(64) } })).status === 400);
+  const old = await buildAlta({ issuer, invoice: { number: 'AT-0002', date: '2026-10-07', recipient: { name: 'Acme', nif: 'B12345674' }, lines: [{ description: 'Work', qty: 1, price: 100, vat: 21 }] }, prev: null, generatedAt: '2026-10-01T10:00:00+02:00' });
+  expect('a backdated record (generated more than a few minutes ago) and a malformed one are refused', (await call(attest, { headers: { 'x-forwarded-for': '11.0.0.2' }, body: attestPayload(old) })).status === 400 && (await call(attest, { headers: { 'x-forwarded-for': '11.0.0.2' }, body: { ...attestPayload(rec), type: 'F2' } })).status === 400 && (await call(attest, { headers: { 'x-forwarded-for': '11.0.0.2' }, body: {} })).status === 400);
+  expect('attest POST needs a same-origin browser (curl is 403), is POST/GET only, and is rate limited', (await call(attest, { headers: { 'sec-fetch-site': '' }, body: attestPayload(rec) })).status === 403 && (await call(attest, { method: 'PUT' })).status === 405);
+  const r1 = await buildRectificativa({ issuer, target: rec, number: 'AT-0003', date: '2026-10-07', lines: [{ description: 'Work', qty: 1, price: 80, vat: 21 }], reason: 'x', prev: rec });
+  const signedR1 = await call(attest, { headers: { 'x-forwarded-for': '11.0.0.3' }, body: attestPayload(r1) });
+  expect('the corrective invoice (R1) is signed too', signedR1.status === 200 && (await checkAttestation({ ...r1, attestation: signedR1.json }, askKey.json)).state === 'signed');
+  let limited = 0;
+  for (let i = 0; i < 62; i++) limited = (await call(attest, { headers: { 'x-forwarded-for': '11.0.9.9' }, body: attestPayload(rec) })).status;
+  expect('attest is rate limited per IP (60 per hour)', limited === 429);
+  resetGuard();
+
+  const gen = spawnSync(process.execPath, ['scripts/attest-keygen.js'], { cwd: fileURLToPath(new URL('..', import.meta.url)), encoding: 'utf8', env: { PATH: process.env.PATH } });
+  expect('attest:keygen only prints how to generate the key (the command and the variable name), never a key', gen.status === 0 && gen.stdout.includes('ATTEST_PRIVATE_KEY') && gen.stdout.includes('randomBytes(32)') && !/[A-Za-z0-9+/]{43}=/.test(gen.stdout) && !gen.stdout.includes('PRIVATE KEY-----'));
+  const envBefore = { MOCK: process.env.MOCK, ATTEST: process.env.ATTEST_PRIVATE_KEY };
+  delete process.env.MOCK; delete process.env.ATTEST_PRIVATE_KEY;
+  const noKey = await call(attest, { method: 'GET' });
+  const noKeyPost = await call(attest, { body: attestPayload(rec) });
+  let hb = '';
+  health({ method: 'GET', headers: {} }, { writeHead() {}, end(c) { hb = c; } });
+  expect('without ATTEST_PRIVATE_KEY (and no MOCK) attestation is off: GET and POST are 404 and nothing throws', attestKey() === null && noKey.status === 404 && noKey.json.enabled === false && noKeyPost.status === 404 && JSON.parse(hb).attestation === false);
+  process.env.ATTEST_PRIVATE_KEY = 'not a key';
+  expect('an unusable key means off, not a crash', attestKey() === null && (await call(attest, { method: 'GET' })).status === 404 && parsePrivateKey('') === null);
+  process.env.ATTEST_PRIVATE_KEY = randomBytes(32).toString('base64');
+  const rawKey = await call(attest, { method: 'GET' });
+  const viaRaw = await call(attest, { headers: { 'x-forwarded-for': '11.0.1.1' }, body: attestPayload(rec) });
+  expect('a base64 raw key (32 bytes) works: its own key id, signatures verify, mode live', rawKey.status === 200 && rawKey.json.mode === 'live' && rawKey.json.keyId !== askKey.json.keyId && (await checkAttestation({ ...rec, attestation: viaRaw.json }, rawKey.json)).state === 'signed');
+  process.env.ATTEST_PRIVATE_KEY = generateKeyPairSync('ed25519').privateKey.export({ type: 'pkcs8', format: 'pem' });
+  const pemKey = await call(attest, { method: 'GET' });
+  const viaPem = await call(attest, { headers: { 'x-forwarded-for': '11.0.1.2' }, body: attestPayload(rec) });
+  expect('a PEM key works too, and the old key id no longer verifies the new signatures', pemKey.status === 200 && (await checkAttestation({ ...rec, attestation: viaPem.json }, pemKey.json)).state === 'signed' && (await checkAttestation({ ...rec, attestation: viaPem.json }, askKey.json)).state === 'unchecked' && attestMessage('ab', 'x') === 'AB|x');
+  if (envBefore.MOCK === undefined) delete process.env.MOCK; else process.env.MOCK = envBefore.MOCK;
+  if (envBefore.ATTEST === undefined) delete process.env.ATTEST_PRIVATE_KEY; else process.env.ATTEST_PRIVATE_KEY = envBefore.ATTEST;
+  resetGuard();
+}
+
 // PayPal webhooks (B7, demo-grade): the signature is verified by PayPal (mock: one known test signature), events are
 // deduplicated by event_id, kept in memory (last 200) and read back per invoice, bound to the browser that created the invoice by its HMAC token.
 {

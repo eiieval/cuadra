@@ -185,7 +185,7 @@ expect('document: a stamp and the hash check line appear when asked', renderDocu
 
 const verifyPage = read('public/verify.html');
 const verifyJs = read('public/verify.js');
-expect('verify page: never calls a server (no fetch, XHR, beacon or form)', !/fetch\(|XMLHttpRequest|sendBeacon|WebSocket|<form/.test(verifyJs + verifyPage + read('public/js/share.js') + read('public/js/document.js')));
+expect('verify page: the record is never sent (no XHR, beacon, form or socket); the only request is GET /api/attest for the public key, with no body and no record data', !/fetch[(]|XMLHttpRequest|sendBeacon|WebSocket|<form/.test(verifyJs + verifyPage + read('public/js/share.js') + read('public/js/document.js')) && (read('public/js/attest.js').match(/fetchFn[(]/g) || []).length === 1 && read('public/js/attest.js').includes("fetchFn('/api/attest', { headers: { accept: 'application/json' } })") && !/method:|body:/.test(read('public/js/attest.js')));
 expect('verify page: print rules show only the document', /@media print[\s\S]*\.print-doc main > :not\(#paper\)\s*\{\s*display: none !important/.test(css) && verifyPage.includes('class="print-doc') && verifyPage.includes('id="paper"') && (verifyPage.match(/no-print/g) || []).length >= 4);
 {
   const good = verdictHtml({ ok: true, hash: 'ABCDEF0123456789' }), bad = verdictHtml({ ok: false, reason: 'the content does not match its hash' });
@@ -476,6 +476,56 @@ expect('the CSP gained no origin: fonts and styles still come only from Google F
   expect('plans: with PAYPAL_PLAN_PRO and PAYPAL_PLAN_TEAM set it is true and the response carries no ids', JSON.parse(body).subscriptions === true && !body.includes('P-x'));
   for (const k of ['PAYPAL_PLAN_PRO', 'PAYPAL_PLAN_TEAM']) delete process.env[k];
   Object.assign(process.env, saved);
+}
+
+// Signed attestation (W1) in the browser: the record carries it, the chain shows a shield, the document footer and the
+// verification page say "Signed by this Cuadra deployment" or "Unsigned copy", and a missing key is "signature not checked".
+{
+  process.env.MOCK = '1';
+  const { default: attestApi } = await import('../api/attest.js');
+  const { checkAttestation, attestPayload, attestWords, fetchAttestKey, forgetAttestKey } = await import('../public/js/attest.js');
+  const { attestHtml } = await import('../public/js/verdict.js');
+  const { attestLineHtml } = await import('../public/js/document.js');
+  const api = async (handler, method, body = {}) => {
+    let out = '', status = 200;
+    await handler({ method, headers: { 'content-type': 'application/json', host: 'localhost', 'x-forwarded-for': '12.0.0.1', 'sec-fetch-site': 'same-origin' }, body }, { writeHead(s) { status = s; }, end(c) { out += c || ''; } });
+    return { status, json: JSON.parse(out) };
+  };
+  const key = (await api(attestApi, 'GET')).json;
+  const rec = await buildAlta({ issuer, invoice: { number: 'SMP-0100', date: '2026-10-07', recipient: { name: 'Acme', nif: 'B12345674' }, lines: [{ description: 'Work', qty: 1, price: 100, vat: 21 }] }, prev: null });
+  const sig = (await api(attestApi, 'POST', attestPayload(rec))).json;
+  const signedRec = { ...rec, attestation: sig };
+
+  const back = await decodeRecord(await encodeRecord(signedRec));
+  expect('attestation: it travels in the verification link (whitelisted fields) and verifies after the round trip', back.attestation?.keyId === key.keyId && (await verifyRecord(back)).ok && (await checkAttestation(back, key)).state === 'signed' && !JSON.stringify(shareable(rec)).includes('attestation'));
+  expect('attestation: a malformed one in a link is rejected like any other bad field', await decodeRecord(await encodeRecord({ ...signedRec, attestation: { ...sig, signature: 'short' } })).then(() => false, (e) => e instanceof ShareError) && await decodeRecord(await encodeRecord({ ...signedRec, attestation: { ...sig, keyId: 'XYZ' } })).then(() => false, (e) => e instanceof ShareError));
+  expect('attestation: a signature copied onto another record (a forged record with its own hash) does not verify', (await checkAttestation({ ...rec, hash: 'B'.repeat(64), attestation: sig }, key)).state === 'invalid');
+
+  const docSigned = renderDocument(signedRec, { qr: () => '', attest: { state: 'signed', keyId: key.keyId, signedAt: sig.signedAt } });
+  const docUnsigned = renderDocument(rec, { qr: () => '', attest: { state: 'unsigned' } });
+  expect('attestation: the document footer says "Signed by this Cuadra deployment" with the key and the date, or "Unsigned copy"', docSigned.includes('Signed by this Cuadra deployment') && docSigned.includes(key.keyId) && docSigned.includes(sig.signedAt.slice(0, 10)) && docSigned.includes('data-attest="signed"') && docUnsigned.includes('Unsigned copy') && !docUnsigned.includes('Signed by') && !renderDocument(rec, { qr: () => '' }).includes('data-attest'));
+  expect('attestation: "signature not checked" when the key cannot be fetched, a clear warning when it does not verify', attestWords({ state: 'unchecked', reason: 'key' }).text === 'Signature not checked' && attestLineHtml({ state: 'unchecked', reason: 'key' }).includes('Signature not checked') && attestWords({ state: 'invalid' }).tone === 'bad' && attestLineHtml({ state: 'invalid' }).includes('is-bad') && attestLineHtml({ state: 'checking' }).includes('Checking the signature'));
+  const pageSigned = attestHtml({ state: 'signed', keyId: key.keyId, signedAt: sig.signedAt }), pageUnsigned = attestHtml({ state: 'unsigned' }), pageNoKey = attestHtml({ state: 'unchecked', reason: 'key' });
+  expect('verify page copy: "Signed by this Cuadra deployment" (ok, with a shield) vs "Unsigned copy" (neutral) vs "Signature not checked"', pageSigned.state === 'ok' && pageSigned.html.includes('Signed by this Cuadra deployment') && pageSigned.html.includes('<svg') && pageUnsigned.state === 'info' && pageUnsigned.html.includes('Unsigned copy') && pageNoKey.html.includes('Signature not checked') && attestHtml({ state: 'invalid' }).state === 'bad');
+  const verifyHtml = read('public/verify.html'), verifyScript = read('public/verify.js');
+  expect('verify page: it has the signature line, checks the signature only for a record whose hash matches, and says the record is never sent', verifyHtml.includes('id="attest"') && /fetchAttestKey/.test(verifyScript) && /v\.ok && !rec\.kind \? await checkAttestation/.test(verifyScript) && verifyHtml.includes('The record is never sent to any server') && !verifyHtml.includes('Nothing is sent to any server'));
+
+  const blocks = chainBlocks([signedRec], await verifyChain([signedRec]), { attested: new Set([signedRec.hash]) });
+  const html = chainTrackHtml(blocks);
+  expect('chain: a signed, verified record gets a small shield and "signed by this Cuadra deployment" in its tip and label; an unsigned one does not', blocks[0].attested === true && html.includes('title="Signed by this Cuadra deployment"') && html.includes('signed by this Cuadra deployment. Open details') && blocks[0].tip.includes('signed by this deployment') && !chainTrackHtml(chainBlocks([rec], await verifyChain([rec]), {})).includes('Signed by this Cuadra'));
+  const forged = { ...signedRec, total: '999.00' };
+  expect('chain: a broken (altered) block never shows the shield, even if it carries a signature', chainBlocks([forged], await verifyChain([forged]), { attested: new Set([forged.hash]) })[0].attested === false);
+
+  const answer = (status, body) => async () => ({ ok: status === 200, status, json: async () => body });
+  forgetAttestKey();
+  expect('fetchAttestKey: a 404 (no key on this deployment) is null, never an error', (await fetchAttestKey(answer(404, { enabled: false }))) === null);
+  forgetAttestKey();
+  expect('fetchAttestKey: a network failure or nonsense is null; a good answer is the key', (await fetchAttestKey(async () => { throw new Error('offline'); })) === null && (forgetAttestKey(), (await fetchAttestKey(answer(200, { publicKey: 'x', keyId: 'y' }))) === null) && (forgetAttestKey(), (await fetchAttestKey(answer(200, key)))?.keyId === key.keyId));
+  forgetAttestKey();
+  const activityLabels = EVENTS.attested;
+  expect('Activity knows the attestation event', activityLabels === 'Signed by this deployment');
+  const appSrc = read('public/app.js');
+  expect('app: the browser asks for the signature right after issuing (and for the R1), silently when the deployment has no key', /await attest\(rec\);/.test(appSrc) && /await attest\(record\);/.test(appSrc) && /if \(!\(await fetchAttestKey\(\)\)\) return;/.test(appSrc) && /if \(r\.error \|\| !r\.signature\) return;/.test(appSrc));
 }
 
 // Gestoría mode (B6): the storage namespace, the index of companies, the second sample company and the numbers of the overview

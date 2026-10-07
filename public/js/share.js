@@ -33,6 +33,7 @@ export function shareable(r) {
     lines: (r.lines || []).map((l) => ({ description: l.description, qty: l.qty, price: l.price, vat: l.vat })),
     breakdown: (r.breakdown || []).map((b) => ({ rate: b.rate, base: b.base, tax: b.tax })),
     ...(r.dueDate ? { dueDate: r.dueDate } : {}),
+    ...(r.attestation ? { attestation: { signature: r.attestation.signature, keyId: r.attestation.keyId, signedAt: r.attestation.signedAt } } : {}),
     ...(r.rectifies ? { rectifies: { nif: r.rectifies.nif, number: r.rectifies.number, date: r.rectifies.date }, tipoRectificativa: r.tipoRectificativa || 'S', rectified: { base: r.rectified?.base, tax: r.rectified?.tax }, reason: r.reason || '' } : {}),
     ...(payer ? { payerUrl: payer } : {}),
   };
@@ -101,6 +102,11 @@ export function sanitizeRecord(raw) {
     rec.reason = str(raw.reason ?? '', 200);
   }
   if (raw.dueDate !== undefined) rec.dueDate = str(raw.dueDate, 10, { re: ISO_DAY });
+  if (raw.attestation !== undefined) {
+    const a = raw.attestation;
+    if (!a || typeof a !== 'object') throw bad();
+    rec.attestation = { signature: str(a.signature, 86, { re: /^[A-Za-z0-9_-]{86}$/ }), keyId: str(a.keyId, 16, { re: /^[0-9a-f]{16}$/ }), signedAt: str(a.signedAt, 40, { re: STAMP }) };
+  }
   const payer = safeUrl(raw.payerUrl);
   if (payer && payer.length <= 400) rec.payerUrl = payer;
   return rec;
