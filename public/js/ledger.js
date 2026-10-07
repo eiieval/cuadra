@@ -3,7 +3,7 @@
 import { money, isAnulacion, buildAlta, buildAnulacion, isoWithOffset } from './verifactu.js';
 
 export const PAID = ['PAID', 'MARKED_AS_PAID'];
-const DONE = ['PAID', 'CANCELLED'];
+const DONE = ['PAID', 'CANCELLED', 'RECTIFIED'];
 
 export const isoFromDmy = (d) => String(d).split('-').reverse().join('-');
 export const addDays = (iso, n) => {
@@ -15,12 +15,15 @@ export const daysBetween = (a, b) => Math.round((Date.parse(`${b}T00:00:00Z`) - 
 
 export const invoicesOf = (records) => records.filter((r) => !isAnulacion(r));
 export const cancelledNumbers = (records) => new Set(records.filter(isAnulacion).map((r) => r.number));
+// Numbers of the invoices that a corrective invoice (R1) replaced: they stay in the chain, untouched, but no longer count.
+export const rectifiedNumbers = (records) => new Set(records.filter((r) => r?.type === 'R1' && r.rectifies).map((r) => r.rectifies.number));
 export const nextNumber = (records, series) => `${series}-${String(invoicesOf(records).length + 1).padStart(4, '0')}`;
 export const findInvoice = (records, number) => invoicesOf(records).find((r) => r.number === String(number || '').trim().toUpperCase());
 
-// One status per invoice, in priority order: cancelled, paid, overdue, then PayPal's own status, else ISSUED.
-export function stateOf(rec, cancelled, today) {
+// One status per invoice, in priority order: cancelled, rectified, paid, overdue, then PayPal's own status, else ISSUED.
+export function stateOf(rec, cancelled, today, rectified = new Set()) {
   if (cancelled.has(rec.number) || rec.paypal?.status === 'CANCELLED') return 'CANCELLED';
+  if (rectified.has(rec.number)) return 'RECTIFIED';
   if (rec.paidAt || PAID.includes(rec.paypal?.status)) return 'PAID';
   if (rec.dueDate && today > rec.dueDate) return 'OVERDUE';
   return rec.paypal?.status || 'ISSUED';
@@ -51,16 +54,17 @@ export function returnQuarter(today) {
 
 const live = (records) => {
   const cancelled = cancelledNumbers(records);
-  return { cancelled, list: invoicesOf(records).filter((r) => !cancelled.has(r.number)) };
+  const rectified = rectifiedNumbers(records);
+  return { cancelled, rectified, list: invoicesOf(records).filter((r) => !cancelled.has(r.number) && !rectified.has(r.number)) };
 };
 const baseOf = (r) => (r.breakdown || []).reduce((s, b) => s + Number(b.base), 0);
 const sum = (list, f) => list.reduce((s, r) => s + f(r), 0);
 
 export function summary(records, today) {
-  const { cancelled, list } = live(records);
+  const { cancelled, rectified, list } = live(records);
   const quarter = quarterOfIso(today);
   const inQ = list.filter((r) => quarterOf(r.date) === quarter);
-  const states = list.map((r) => ({ r, s: stateOf(r, cancelled, today) }));
+  const states = list.map((r) => ({ r, s: stateOf(r, cancelled, today, rectified) }));
   const open = states.filter((x) => !DONE.includes(x.s));
   const overdue = states.filter((x) => x.s === 'OVERDUE');
   const paid = states.filter((x) => x.s === 'PAID');

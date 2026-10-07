@@ -4,7 +4,7 @@
 //  - createLedgerGrid(): the grid itself, built only when the vendored library is there (public/vendor/ag-grid).
 // Every number the grid shows comes from the ledger records and the engine; the grid only sorts, filters and draws.
 import { isAnulacion, money } from './verifactu.js';
-import { cancelledNumbers, stateOf } from './ledger.js';
+import { cancelledNumbers, rectifiedNumbers, stateOf } from './ledger.js';
 import { csvCell, csvPlain, esc, eur, fmtDate } from './fmt.js';
 import { BADGE, OPEN, statusWord } from './status.js';
 
@@ -14,12 +14,13 @@ import { BADGE, OPEN, statusWord } from './status.js';
 // carry it as data-i, so the click handler of the ledger works the same for the table and for the grid.
 export function ledgerRows(records, { today, flashNumber = '', brokenAt = -1 } = {}) {
   const cancelled = cancelledNumbers(records);
+  const rectified = rectifiedNumbers(records);
   return records.map((r, i) => {
-    const common = { i, number: String(r.number), hash: String(r.hash || ''), date: String(r.date || ''), altered: i === brokenAt, flash: Boolean(flashNumber) && r.number === flashNumber, sample: Boolean(r.sample) };
+    const common = { i, number: String(r.number), hash: String(r.hash || ''), date: String(r.date || ''), altered: i === brokenAt, flash: Boolean(flashNumber) && r.number === flashNumber, sample: Boolean(r.sample), rectifies: r.type === 'R1' && r.rectifies ? String(r.rectifies.number) : '' };
     if (isAnulacion(r)) {
       return { ...common, kind: 'anulacion', client: '', nif: '', total: '', totalNum: 0, base: '', vat: '', status: 'ANULACION', open: false, paypal: false, paypalError: '', due: '', reason: String(r.reason || '') };
     }
-    const status = stateOf(r, cancelled, today);
+    const status = stateOf(r, cancelled, today, rectified);
     return {
       ...common, kind: 'alta', client: String(r.recipient?.name || ''), nif: String(r.recipient?.nif || ''),
       total: String(r.total), totalNum: Number(r.total), base: money(Number(r.total) - Number(r.taxTotal)), vat: String(r.taxTotal),
@@ -59,7 +60,7 @@ export function chipCounts(rows) {
 // but cancelled invoices, the row totals those instead of a misleading 0,00 €. Cents are summed as integers.
 export function gridTotals(rows) {
   const invoices = rows.filter((r) => r.kind === 'alta');
-  const live = invoices.filter((r) => r.status !== 'CANCELLED');
+  const live = invoices.filter((r) => r.status !== 'CANCELLED' && r.status !== 'RECTIFIED');
   const voided = invoices.length - live.length;
   const onlyVoided = !live.length && voided > 0;
   const counted = onlyVoided ? invoices : live;
@@ -70,7 +71,7 @@ export function gridTotals(rows) {
     count: n,
     totalNum: Number(money(cents / 100)),
     label: `${onlyVoided ? 'Cancelled' : 'Total'} · ${n} invoice${n === 1 ? '' : 's'}`,
-    note: !onlyVoided && voided ? `${voided} cancelled left out` : '',
+    note: !onlyVoided && voided ? `${voided} ${invoices.some((r) => r.status === 'RECTIFIED') ? 'voided' : 'cancelled'} left out` : '',
   };
 }
 
@@ -111,14 +112,14 @@ export function numberCellHtml(row) {
   if (row.kind === 'anulacion') {
     return `<span class="g-anul" title="${esc(`Cancels ${row.number}${row.reason ? ` · ${row.reason}` : ''}`)}"><span aria-hidden="true">↳</span> Cancels <b class="num">${esc(row.number)}</b>${row.reason ? `<span class="g-reason"> · ${esc(row.reason)}</span>` : ''}</span>`;
   }
-  return `<span class="num g-number${row.status === 'CANCELLED' ? ' line-through' : ''}">${esc(row.number)}</span>`;
+  return `<span class="num g-number${(row.status === 'CANCELLED' || row.status === 'RECTIFIED') ? ' line-through' : ''}">${esc(row.number)}</span>`;
 }
 
 // The pinned row: "Total · 6 invoices" and, when something was left out of the sum, why.
 export const totalCellHtml = (t) => `<span class="g-total-label">${esc(t.label)}</span>${t.note ? `<span class="g-note"> · ${esc(t.note)}</span>` : ''}`;
 
 export function clientCellHtml(row) {
-  const sub = [row.nif, row.sample ? 'sample' : ''].filter(Boolean).join(' · ');
+  const sub = [row.rectifies ? `R1 · rectifies ${row.rectifies}` : row.nif, row.sample ? 'sample' : ''].filter(Boolean).join(' · ');
   return `<span class="g-client"><span class="g-name" title="${esc(row.client)}">${esc(row.client)}</span>${sub ? `<span class="g-sub num">${esc(sub)}</span>` : ''}</span>`;
 }
 
@@ -326,7 +327,7 @@ export function createLedgerGrid(host, ag, { rows = [], onShown, reducedMotion =
       'row-flash': (p) => Boolean(p.data?.flash),
       'row-bad': (p) => Boolean(p.data?.altered),
       'row-anul': (p) => p.data?.kind === 'anulacion',
-      'row-void': (p) => p.data?.status === 'CANCELLED',
+      'row-void': (p) => p.data?.status === 'CANCELLED' || p.data?.status === 'RECTIFIED',
       'row-total': (p) => Boolean(p.node.rowPinned),
     },
     isExternalFilterPresent: () => chip !== 'all',

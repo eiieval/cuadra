@@ -15,6 +15,7 @@ export const EVENTS = {
   reminder: 'Reminder sent',
   payment: 'Payment recorded',
   cancelled: 'Cancelled',
+  rectified: 'Corrective invoice issued',
   sync: 'PayPal status changed',
   tamper_on: 'Tamper test on',
   tamper_off: 'Tamper test off',

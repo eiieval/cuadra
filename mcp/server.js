@@ -8,8 +8,8 @@ import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 import { loadEnv } from '../lib/env.js';
-import { buildAlta, buildAnulacion, verifyChain, recordXml, validNif, isAnulacion } from '../public/js/verifactu.js';
-import { stateOf, summary, vatReturn, returnQuarter, cancelledNumbers, invoicesOf, findInvoice, nextNumber, addDays, daysBetween, isoFromDmy, clients } from '../public/js/ledger.js';
+import { buildAlta, buildAnulacion, buildRectificativa, verifyChain, recordXml, validNif, isAnulacion } from '../public/js/verifactu.js';
+import { stateOf, summary, vatReturn, returnQuarter, cancelledNumbers, rectifiedNumbers, invoicesOf, findInvoice, nextNumber, addDays, daysBetween, isoFromDmy, clients } from '../public/js/ledger.js';
 import { cleanInvoice } from '../lib/validate.js';
 import * as paypal from '../lib/paypal.js';
 
@@ -67,10 +67,11 @@ async function mutate(fn) {
 
 // ---------- views ----------
 
-const view = (r, set) => ({
+const stateIn = (r, records) => stateOf(r, cancelledNumbers(records), today(), rectifiedNumbers(records));
+const view = (r, records) => ({
   number: r.number, date: isoFromDmy(r.date), client: r.recipient?.name || '', nif: r.recipient?.nif || '',
   base: (Number(r.total) - Number(r.taxTotal)).toFixed(2), vat: r.taxTotal, total: r.total,
-  status: stateOf(r, set, today()), due: r.dueDate || null, paypal: r.paypal?.id ? { id: r.paypal.id, status: r.paypal.status, payerUrl: r.paypal.payerUrl || null } : null,
+  status: stateIn(r, records), due: r.dueDate || null, paypal: r.paypal?.id ? { id: r.paypal.id, status: r.paypal.status, payerUrl: r.paypal.payerUrl || null } : null,
   hash: r.hash, verifyUrl: r.qr,
 });
 const need = (ledger, number) => {
@@ -78,7 +79,7 @@ const need = (ledger, number) => {
   if (!rec) throw new ToolError(`Invoice ${number} is not in the ledger. Use list_invoices to see invoice numbers.`);
   return rec;
 };
-const open = (rec, ledger) => !['PAID', 'CANCELLED'].includes(stateOf(rec, cancelledNumbers(ledger.records), today()));
+const open = (rec, ledger) => !['PAID', 'CANCELLED', 'RECTIFIED'].includes(stateIn(rec, ledger.records));
 
 function draft(ledger, args) {
   const number = nextNumber(ledger.records, ledger.company.series);
@@ -155,21 +156,20 @@ const TOOLS = {
         if (!paypalOn()) paypalError = 'PayPal is not configured (PAYPAL_CLIENT_ID, PAYPAL_CLIENT_SECRET).';
         else await sendToPaypal(rec).catch((e) => { paypalError = e.public ? e.message : 'PayPal failed.'; rec.paypal = { status: 'ERROR', error: paypalError }; });
       }
-      return { issued: view(rec, cancelledNumbers(ledger.records)), paypalError };
+      return { issued: view(rec, ledger.records), paypalError };
     }),
   },
   list_invoices: {
     title: 'List invoices',
     description: 'List invoices with their status (ISSUED, SENT, OVERDUE, PAID, CANCELLED), due date and PayPal link.',
-    inputSchema: { type: 'object', properties: { status: { type: 'string', enum: ['ALL', 'OPEN', 'OVERDUE', 'PAID', 'CANCELLED'], default: 'ALL' }, client: { type: 'string', description: 'Filter by client name' } } },
+    inputSchema: { type: 'object', properties: { status: { type: 'string', enum: ['ALL', 'OPEN', 'OVERDUE', 'PAID', 'CANCELLED', 'RECTIFIED'], default: 'ALL' }, client: { type: 'string', description: 'Filter by client name' } } },
     annotations: { readOnlyHint: true, openWorldHint: false },
     run: async (a) => {
       const ledger = await load();
-      const set = cancelledNumbers(ledger.records);
       const q = String(a.client || '').toLowerCase();
-      const rows = invoicesOf(ledger.records).map((r) => view(r, set))
+      const rows = invoicesOf(ledger.records).map((r) => view(r, ledger.records))
         .filter((r) => !q || r.client.toLowerCase().includes(q))
-        .filter((r) => !a.status || a.status === 'ALL' || (a.status === 'OPEN' ? !['PAID', 'CANCELLED'].includes(r.status) : r.status === a.status));
+        .filter((r) => !a.status || a.status === 'ALL' || (a.status === 'OPEN' ? !['PAID', 'CANCELLED', 'RECTIFIED'].includes(r.status) : r.status === a.status));
       return { company: ledger.company, summary: summary(ledger.records, today()), invoices: rows.reverse().slice(0, 100), clients: clients(ledger.records).slice(0, 20) };
     },
   },
@@ -197,10 +197,10 @@ const TOOLS = {
     run: (a) => mutate(async (ledger) => {
       const rec = need(ledger, a.number);
       if (rec.paypal?.id) throw new ToolError(`${rec.number} is already on PayPal (${rec.paypal.status}).`);
-      if (!open(rec, ledger)) throw new ToolError(`${rec.number} is ${stateOf(rec, cancelledNumbers(ledger.records), today())}; nothing to collect.`);
+      if (!open(rec, ledger)) throw new ToolError(`${rec.number} is ${stateIn(rec, ledger.records)}; nothing to collect.`);
       if (!paypalOn()) throw new ToolError('PayPal is not configured.');
       await sendToPaypal(rec);
-      return { invoice: view(rec, cancelledNumbers(ledger.records)) };
+      return { invoice: view(rec, ledger.records) };
     }),
   },
   send_reminder: {
@@ -224,7 +224,7 @@ const TOOLS = {
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     run: (a) => mutate(async (ledger) => {
       const rec = need(ledger, a.number);
-      if (!open(rec, ledger)) throw new ToolError(`${rec.number} is already ${stateOf(rec, cancelledNumbers(ledger.records), today())}.`);
+      if (!open(rec, ledger)) throw new ToolError(`${rec.number} is already ${stateIn(rec, ledger.records)}.`);
       const method = METHODS.includes(a.method) ? a.method : 'BANK_TRANSFER';
       const date = /^\d{4}-\d{2}-\d{2}$/.test(a.date || '') && a.date <= today() ? a.date : today();
       if (rec.paypal?.id) rec.paypal.status = (await paypal.recordPayment(rec.paypal.id, { amount: Number(rec.total), date, method })).status;
@@ -234,18 +234,38 @@ const TOOLS = {
   },
   cancel_invoice: {
     title: 'Cancel invoice',
-    description: 'Annul an unpaid invoice issued by mistake: cancels it in PayPal and appends a VeriFactu RegistroAnulacion to the chain. The original record is never edited. Paid invoices need a corrective invoice instead.',
+    description: 'Annul an unpaid invoice issued by mistake: cancels it in PayPal and appends a VeriFactu RegistroAnulacion to the chain. The original record is never edited. Paid invoices need rectify_invoice instead.',
     inputSchema: { type: 'object', properties: { number, reason: { type: 'string', maxLength: 200 } }, required: ['number', 'reason'] },
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
     run: (a) => mutate(async (ledger) => {
       const rec = need(ledger, a.number);
-      const st = stateOf(rec, cancelledNumbers(ledger.records), today());
+      const st = stateIn(rec, ledger.records);
+      if (st === 'RECTIFIED') throw new ToolError(`${rec.number} was rectified by a corrective invoice and cannot be cancelled.`);
       if (cancelledNumbers(ledger.records).has(rec.number)) throw new ToolError(`${rec.number} is already cancelled.`);
       if (st === 'PAID') throw new ToolError(`${rec.number} is paid. A paid invoice needs a corrective invoice (factura rectificativa), not a cancellation.`);
       if (rec.paypal?.id && rec.paypal.status !== 'CANCELLED') rec.paypal.status = (await paypal.cancel(rec.paypal.id, String(a.reason || '').slice(0, 200))).status;
       const anul = await buildAnulacion({ issuer: ledger.company, target: rec, prev: ledger.records.at(-1), reason: a.reason });
       ledger.records.push(anul);
       return { cancelled: rec.number, cancellationHash: anul.hash, paypal: rec.paypal?.status || null };
+    }),
+  },
+  rectify_invoice: {
+    title: 'Issue corrective invoice',
+    description: 'Issue a corrective invoice (factura rectificativa, VeriFactu type R1, substitution) for a PAID invoice that was wrong. Give the FULL corrected lines, not the difference. The paid invoice is never edited: a new hash-chained RegistroAlta points at it and the original becomes RECTIFIED. Unpaid invoices are cancelled instead. Only after the user confirmed the corrected invoice.',
+    inputSchema: { type: 'object', properties: { number, reason: { type: 'string', maxLength: 200, description: 'e.g. wrong price' }, lines }, required: ['number', 'reason', 'lines'] },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    run: (a) => mutate(async (ledger) => {
+      const rec = need(ledger, a.number);
+      const st = stateIn(rec, ledger.records);
+      if (st === 'RECTIFIED') throw new ToolError(`${rec.number} has already been rectified.`);
+      if (st !== 'PAID') throw new ToolError(`${rec.number} is ${st}. Only paid invoices get a corrective invoice; unpaid ones are cancelled with cancel_invoice.`);
+      const number = nextNumber(ledger.records, ledger.company.series);
+      const { problems, invoice } = cleanInvoice({ number, date: today(), recipient: rec.recipient, lines: a.lines, issuerName: ledger.company.name });
+      if (problems.length) throw new ToolError(`Invalid corrected invoice: ${problems.join('; ')}`);
+      const record = await buildRectificativa({ issuer: ledger.company, target: rec, number, date: invoice.date, lines: invoice.lines, reason: String(a.reason || 'Correction').slice(0, 200), prev: ledger.records.at(-1) });
+      Object.assign(record, { email: rec.email, paidAt: rec.paidAt || today() });
+      ledger.records.push(record);
+      return { rectified: rec.number, corrective: view(record, ledger.records), type: 'R1', previousTotal: rec.total, newTotal: record.total, difference: (Number(record.total) - Number(rec.total)).toFixed(2), note: 'The difference is settled with the client outside Cuadra.' };
     }),
   },
   vat_return: {

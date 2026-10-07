@@ -105,6 +105,7 @@ Every record lives in one append-only array, the hash chain. Two kinds of record
 | `send_reminder` | PayPal payment reminder | |
 | `record_payment` | Marks a transfer or cash payment, in PayPal too | idempotent |
 | `cancel_invoice` | PayPal cancel + RegistroAnulacion | destructive |
+| `rectify_invoice` | Corrective invoice (R1, substitution) for a paid invoice: a new chained record, the original is never edited | |
 | `vat_return` | Modelo 303 draft and days to the deadline | read-only |
 | `verify_ledger` | Checks the whole hash chain | read-only |
 | `export_verifactu_xml` | RegistroAlta / RegistroAnulacion XML | read-only |

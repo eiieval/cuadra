@@ -242,6 +242,8 @@ button.chain-block:hover { transform: translateY(-2px); border-color: rgba(255, 
 .chain-block.verified .block-mark { color: var(--ok); }
 .chain-block.anulacion.verified { border-color: rgba(255, 255, 255, .2); background: rgba(255, 255, 255, .04); }
 .chain-block.anulacion.verified .block-mark { color: var(--soft); }
+.chain-block.rectificativa { height: 5.4rem; }
+.block-rect { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chain-block.broken { border-color: var(--bad); background: color-mix(in srgb, var(--bad) 12%, var(--surface-2)); box-shadow: 0 0 0 3px color-mix(in srgb, var(--bad) 15%, transparent); }
 .chain-block.broken .block-top, .chain-block.broken .block-mark { color: var(--bad); }
 .chain-block.unverifiable { border: 1px dashed rgba(255, 255, 255, .26); background: transparent; color: var(--soft); }
@@ -296,6 +298,7 @@ button.chain-block:hover { transform: translateY(-2px); border-color: rgba(255, 
 .paper-sum { margin-top: .3rem; padding-top: .3rem; border-top: 1px solid color-mix(in srgb, var(--paper-ink) 14%, transparent); }
 .paper-row { display: flex; justify-content: space-between; gap: .5rem; }
 .paper-total { margin-top: .2rem; font-size: 14px; font-weight: 700; }
+.paper-ref { margin: .1rem 0 .5rem; font-size: 12px; color: var(--paper-soft); }
 .paper-due { margin-top: .35rem; font-size: 12px; color: var(--paper-soft); }
 
 .checks { margin-top: .45rem; padding: .5rem .7rem; border: 1px solid var(--line); border-radius: .8rem; background: color-mix(in srgb, var(--surface-2) 60%, transparent); }

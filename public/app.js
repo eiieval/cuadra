@@ -1,13 +1,13 @@
-import { buildAlta, buildAnulacion, verifyChain, recordXml, money, validNif, totals, isAnulacion } from './js/verifactu.js';
+import { buildAlta, buildAnulacion, buildRectificativa, verifyChain, recordXml, money, validNif, totals, isAnulacion } from './js/verifactu.js';
 import {
-  stateOf, summary, vatReturn, returnQuarter, previousQuarter, clients, cancelledNumbers, invoicesOf, findInvoice,
+  stateOf, summary, vatReturn, returnQuarter, previousQuarter, clients, cancelledNumbers, rectifiedNumbers, invoicesOf, findInvoice,
   nextNumber, buildSample, addDays, daysBetween, isoFromDmy, quarterOfIso,
 } from './js/ledger.js';
 
 import { esc, eur, fmtDate, isoToday, md, safeUrl } from './js/fmt.js';
 import { chainBlocks, chainStatus, chainTrackHtml, statusHtml } from './js/chain.js';
 import { engineChecks, checksHtml } from './js/checks.js';
-import { normalizeProposal as normalize, proposalPaperHtml } from './js/proposal.js';
+import { normalizeProposal as normalize, normalizeRectify, proposalPaperHtml } from './js/proposal.js';
 import { detectLang, synthReply } from './js/say.js';
 import { isPlan, planProgress, planSummary, pendingLowRisk, hasHighRisk } from './js/plan.js';
 import { reduceActivity, activityRows, activityHtml } from './js/activity.js';
@@ -98,10 +98,11 @@ function toast(content) {
 
 const today = () => isoToday();
 const cancelled = () => cancelledNumbers(state.records);
-const status = (rec) => stateOf(rec, cancelled(), today());
+const status = (rec) => stateOf(rec, cancelled(), today(), rectifiedNumbers(state.records));
 
 function context() {
   const set = cancelled();
+  const rect = rectifiedNumbers(state.records);
   const v = vatReturn(state.records, returnQuarter(today()));
   return {
     today: today(),
@@ -109,7 +110,9 @@ function context() {
     vatReturn: { quarter: v.quarter, deadline: v.deadline, outputVat: Number(v.boxes['27']) },
     invoices: invoicesOf(state.records).slice(-40).map((r) => ({
       number: r.number, client: r.recipient?.name || '', total: Number(r.total), vat: Number(r.taxTotal),
-      status: stateOf(r, set, today()), date: r.date, due: r.dueDate || '', paypal: Boolean(r.paypal?.id),
+      status: stateOf(r, set, today(), rect), date: r.date, due: r.dueDate || '', paypal: Boolean(r.paypal?.id),
+      // The lines of PAID invoices go with the context, so a corrective invoice can start from what was billed.
+      ...(stateOf(r, set, today(), rect) === 'PAID' ? { lines: r.lines.slice(0, 10).map((l) => ({ description: l.description, qty: l.qty, price: l.price, vat: l.vat })) } : {}),
     })),
     clients: clients(state.records).slice(0, 30).map(({ name, nif, email }) => ({ name, nif, email })),
   };
@@ -224,6 +227,7 @@ async function markPaid(rec, method = 'BANK_TRANSFER') {
 // Cancellation never edits the invoice: PayPal stops collecting it, then a RegistroAnulacion is appended to the chain.
 async function annul(rec, reason) {
   if (cancelled().has(rec.number)) return { ok: false, text: `${rec.number} is already cancelled.` };
+  if (status(rec) === 'RECTIFIED') return { ok: false, text: `${rec.number} was rectified by a corrective invoice and cannot be cancelled.` };
   if (status(rec) === 'PAID') return { ok: false, text: `${rec.number} is paid. A paid invoice needs a corrective invoice (factura rectificativa), not a cancellation.` };
   if (rec.paypal?.id && rec.paypal.status !== 'CANCELLED') {
     const r = await post('/api/paypal', { op: 'cancel', id: rec.paypal.id, token: rec.paypal.token, reason });
@@ -241,6 +245,28 @@ async function annul(rec, reason) {
   return { ok: true, text: `${rec.number} cancelled with a chained VeriFactu cancellation record${rec.paypal?.id ? '; the PayPal invoice is cancelled too' : ''}.` };
 }
 
+// A corrective invoice (R1, substitution) for a PAID invoice. The paid invoice is never edited: a new chained invoice with
+// the full corrected lines points at it, and the original shows as RECTIFIED from then on.
+async function rectify(rec, args) {
+  const st = status(rec);
+  if (st === 'RECTIFIED') return { ok: false, text: `${rec.number} has already been rectified.` };
+  if (st !== 'PAID') return { ok: false, text: `${rec.number} is ${st.toLowerCase().replace(/_/g, ' ')}. Only paid invoices get a corrective invoice; unpaid ones are cancelled.` };
+  const { lines, reason } = normalizeRectify(args);
+  const number = nextNumber(state.records, state.company.series);
+  const record = await buildRectificativa({ issuer: state.company, target: rec, number, date: today(), lines, reason: reason || 'Correction', prev: state.records.at(-1) });
+  Object.assign(record, { email: rec.email, paidAt: rec.paidAt || today() });
+  state.records.push(record);
+  chainFx = { newFrom: state.records.length - 1 };
+  flash = { number, at: Date.now() };
+  const diff = Number(money(Number(record.total) - Number(rec.total)));
+  log('system', 'rectified', number, `R1 rectifies ${rec.number} · hash ${record.hash.slice(0, 6)}…`);
+  save();
+  closeSheet();
+  $('#chainStrip').scrollIntoView({ behavior: reducedMotion() ? 'auto' : 'smooth', block: 'nearest' });
+  toast([bit(number, 'num font-semibold'), ' issued, rectifies ', bit(rec.number), ` · hash `, bit(`${record.hash.slice(0, 6)}…`)]);
+  return { ok: true, number, text: `Issued ${number}, a corrective invoice (R1) that rectifies ${rec.number}${diff ? `; the difference is ${eur(diff)}, settle it with the client outside Cuadra` : ''}. ${rec.number} stays in the chain untouched.` };
+}
+
 // One line about a proposal, for the activity log.
 function describe(a) {
   const n = a.args?.number;
@@ -249,6 +275,7 @@ function describe(a) {
   if (a.type === 'propose_collect') return `Send ${n} with PayPal`;
   if (a.type === 'propose_mark_paid') return `Record the payment of ${n}`;
   if (a.type === 'propose_cancel') return `Cancel ${n}`;
+  if (a.type === 'propose_rectify') return `Corrective invoice for ${n}`;
   if (a.type === 'show_vat_return') return 'Modelo 303 draft';
   if (a.type === 'propose_widget') return `Insight: ${cleanSpec(a.args).title}`;
   return String(a.type);
@@ -266,6 +293,7 @@ async function perform(a, act) {
   else if (act === 'remind') r = await remind(rec);
   else if (act === 'collect') r = await sendWithPaypal(rec);
   else if (act === 'mark-paid') r = await markPaid(rec, METHOD[a.args?.method] ? a.args.method : 'BANK_TRANSFER');
+  else if (act === 'rectify') r = await rectify(rec, a.args);
   else if (act === 'cancel') r = await annul(rec, String(a.args?.reason || '').slice(0, 200));
   else return;
   Object.assign(a, { done: r.text, ok: r.ok, ...(r.skipped ? { skipped: true } : {}), ...(r.number ? { number: r.number } : {}), ...(r.pinned ? { pinned: true } : {}) });
@@ -332,7 +360,8 @@ function isDeadEnd(a) {
   if (a.type === 'propose_reminder') return !(rec.paypal?.id && OPEN(st));
   if (a.type === 'propose_collect') return rec.paypal?.id || !OPEN(st);
   if (a.type === 'propose_mark_paid') return !OPEN(st);
-  if (a.type === 'propose_cancel') return st === 'PAID' || (st === 'CANCELLED' && cancelled().has(rec.number));
+  if (a.type === 'propose_rectify') return st !== 'PAID';
+  if (a.type === 'propose_cancel') return st === 'PAID' || st === 'RECTIFIED' || (st === 'CANCELLED' && cancelled().has(rec.number));
   return false;
 }
 const stepViews = (actions) => actions.map((a) => ({ ...a, dead: !a.done && Boolean(isDeadEnd(a)) }));
@@ -363,8 +392,18 @@ function actionCard(a, mi, ai, inPlan = false) {
       const method = METHOD[a.args?.method] ? a.args.method : 'BANK_TRANSFER';
       return `<div class="${card()}">${head(`Record payment · ${METHOD[method]}`)}${done || (OPEN(st) ? buttons(id, 'mark-paid', 'Mark as paid', 'Dismiss', a.busy) : '<div class="card-note">Nothing to record.</div>')}</div>`;
     }
+    if (a.type === 'propose_rectify') {
+      const fix = normalizeRectify(a.args);
+      const paper = proposalPaperHtml({ recipient: { name: rec.recipient?.name || '', nif: rec.recipient?.nif || '', email: rec.email || '' }, lines: fix.lines, description: '', dueDays: 0 }, { issuer: state.company, today: today(), rectifies: { number: rec.number, total: rec.total, reason: fix.reason } });
+      const note = st === 'RECTIFIED' ? 'Already rectified.' : st !== 'PAID' ? 'Only paid invoices get a corrective invoice. Unpaid ones are cancelled.' : '';
+      const foot = a.done
+        ? `<div class="proposal-result${a.ok === false ? ' is-fail' : a.skipped ? ' is-skipped' : ''}"><span>${esc(a.done)}</span>${a.number ? `<button class="btn-ghost !min-h-8" data-view="${esc(a.number)}">View record</button>` : ''}</div>`
+        : note ? `<div class="card-note text-warn">${esc(note)}</div>`
+          : `<div class="proposal-actions"><button class="btn-primary" data-act="rectify" data-id="${id}"${a.busy ? ' disabled' : ''}>${a.busy ? 'Working…' : 'Issue corrective invoice'}</button><button class="btn-ghost" data-act="discard" data-id="${id}"${a.busy ? ' disabled' : ''}>Discard</button></div>`;
+      return `<div class="proposal${a.done ? ' is-done' : ''}">${paper}${foot}</div>`;
+    }
     if (a.type === 'propose_cancel') {
-      const blocked = st === 'PAID' ? 'Paid invoices need a corrective invoice, not a cancellation.' : st === 'CANCELLED' && cancelled().has(rec.number) ? 'Already cancelled.' : '';
+      const blocked = st === 'RECTIFIED' ? 'Already rectified, it cannot be cancelled.' : st === 'PAID' ? 'Paid invoices need a corrective invoice, not a cancellation.' : st === 'CANCELLED' && cancelled().has(rec.number) ? 'Already cancelled.' : '';
       return `<div class="${card(' card-bad')}">${head('Cancel invoice (anulación)')}<div class="card-note !mt-1">${a.args?.reason ? `Reason: ${esc(a.args.reason)}. ` : ''}The invoice is never edited: a VeriFactu cancellation record is appended to the chain${rec.paypal?.id ? ' and the PayPal invoice is cancelled' : ''}.</div>${done || (blocked ? `<div class="card-note text-warn">${esc(blocked)}</div>` : buttons(id, 'cancel', 'Cancel invoice', 'Keep it', a.busy))}</div>`;
     }
     return '';
@@ -554,9 +593,9 @@ function renderInvoices() {
       ? `<button class="btn-ghost !min-h-8" data-i="${i}" data-do="remind">Remind</button>`
       : `<button class="btn-ghost !min-h-8" data-i="${i}" data-do="collect" title="Send with PayPal">Collect</button>`;
     const refresh = r.paypal?.id ? `<button class="btn-ghost !min-h-8" data-i="${i}" data-do="refresh" title="Refresh PayPal status" aria-label="Refresh PayPal status">↻</button>` : '';
-    return `<tr class="row${st === 'CANCELLED' ? ' text-soft' : ''}${mark}">
-      <td class="c-num num whitespace-nowrap text-xs ${st === 'CANCELLED' ? 'line-through' : ''}" title="${esc(r.hash)}">${esc(r.number)}<span class="c-hash text-soft">${esc(r.hash.slice(0, 6))}</span></td>
-      <td class="c-client">${esc(r.recipient?.name)}${r.sample ? ' <span class="text-[11px] text-soft">sample</span>' : ''}</td>
+    return `<tr class="row${st === 'CANCELLED' || st === 'RECTIFIED' ? ' text-soft' : ''}${mark}">
+      <td class="c-num num whitespace-nowrap text-xs ${st === 'CANCELLED' || st === 'RECTIFIED' ? 'line-through' : ''}" title="${esc(r.hash)}">${esc(r.number)}<span class="c-hash text-soft">${esc(r.hash.slice(0, 6))}</span></td>
+      <td class="c-client">${esc(r.recipient?.name)}${r.rectifies ? ` <span class="text-[11px] text-soft num">R1 · rectifies ${esc(r.rectifies.number)}</span>` : ''}${r.sample ? ' <span class="text-[11px] text-soft">sample</span>' : ''}</td>
       <td class="c-total num whitespace-nowrap text-right">${eur(r.total)}</td>
       <td class="c-status"><span class="${BADGE[st] || 'badge'}" title="${esc(r.paypal?.error || (r.paypal?.id ? 'On PayPal' : ''))}">${esc(statusWord(st))}</span>${r.paypal?.id ? ' <span class="text-[11px] text-link">PayPal</span>' : ''}${altered}</td>
       <td class="c-due hidden whitespace-nowrap text-xs text-soft xl:table-cell">${r.dueDate && OPEN(st) ? esc(fmtDate(r.dueDate)) : ''}</td>
@@ -788,17 +827,20 @@ function openDetail(r) {
   const st = anul ? '' : status(r);
   const xmlBlock = `<details><summary class="cursor-pointer text-fg/80">${anul ? 'RegistroAnulacion' : 'RegistroAlta'} XML</summary><pre class="num mt-2 max-h-56 overflow-auto whitespace-pre-wrap break-all rounded bg-ink p-2 text-[11px]">${esc(recordXml(r))}</pre></details>`;
   const actionsHtml = `<div class="flex flex-wrap gap-2"><button class="btn-ghost" data-dl="link">Copy verification link</button><button class="btn-ghost" data-dl="print">Open printable</button><button class="btn-ghost" data-dl="xml">Download XML</button><button class="btn-primary" data-dl="close">Close</button></div>`;
-  const pay = r.paypal?.id ? `${esc(r.paypal.status)}${safeUrl(r.paypal.payerUrl) ? ` · <a class="link" href="${esc(r.paypal.payerUrl)}" target="_blank" rel="noopener noreferrer">payer page</a>` : ''}` : r.paidAt ? `Paid by ${esc(METHOD[r.paidMethod] || 'transfer')} on ${esc(fmtDate(r.paidAt))}` : 'Not on PayPal';
+  const pay = r.paypal?.id ? `${esc(r.paypal.status)}${safeUrl(r.paypal.payerUrl) ? ` · <a class="link" href="${esc(r.paypal.payerUrl)}" target="_blank" rel="noopener noreferrer">payer page</a>` : ''}` : r.rectifies ? `Settled against ${esc(r.rectifies.number)}` : r.paidAt ? `Paid by ${esc(METHOD[r.paidMethod] || 'transfer')} on ${esc(fmtDate(r.paidAt))}` : 'Not on PayPal';
   const manage = !anul && OPEN(st) ? `<div class="space-y-2 rounded-lg border border-line p-2"><div class="text-soft">Manage</div>
       <div class="flex flex-wrap gap-2"><select id="payMethod" class="field !w-auto !py-1 text-xs" aria-label="Payment method"><option value="BANK_TRANSFER">Bank transfer</option><option value="CASH">Cash</option><option value="OTHER">Other</option></select><button class="btn-ghost" data-dl="paid">Mark paid</button></div>
       <div class="flex flex-wrap gap-2"><input id="cancelReason" class="field !w-auto flex-1 !py-1 text-xs" maxlength="200" placeholder="Reason, e.g. duplicate" aria-label="Cancellation reason"><button class="btn-ghost btn-danger" data-dl="cancel">Cancel invoice</button></div></div>` : '';
+  const byR1 = st === 'RECTIFIED' ? state.records.find((x) => x.rectifies?.number === r.number) : null;
+  const rectBox = !anul && st === 'PAID' ? `<div class="space-y-2 rounded-lg border border-line p-2"><div class="text-soft">Paid invoice with a mistake?</div><div class="text-soft">It is never edited. A corrective invoice (R1) replaces it in the chain.</div><button class="btn-ghost" data-dl="rectify">Issue corrective invoice</button></div>`
+    : byR1 ? `<div class="rounded-lg border border-line p-2"><div class="text-soft">Rectified by</div><button class="link num" data-view-rec="${esc(byR1.number)}">${esc(byR1.number)}</button> <span class="text-soft">(R1, substitution)</span></div>` : '';
   $('#dlgBody').innerHTML = `<div class="grid gap-5 lg:grid-cols-[minmax(0,1fr)_17.5rem]">
-    ${renderDocument(r, { qr: qrSvg, stamp: st === 'CANCELLED' ? 'Cancelled' : '' })}
+    ${renderDocument(r, { qr: qrSvg, stamp: st === 'CANCELLED' ? 'Cancelled' : st === 'RECTIFIED' ? 'Rectified' : '' })}
     <div class="min-w-0 space-y-3 text-xs">
       <div id="dlgVerdict" class="verdict !px-3 !py-2 !text-xs" data-state="checking" role="status">Checking the record…</div>
       ${anul ? '' : `<div><div class="text-soft">Status</div><span class="${BADGE[st] || 'badge'}">${esc(st.replace(/_/g, ' '))}</span></div><div><div class="text-soft">Payment</div><div>${pay}</div></div>`}
       ${chainFacts(r)}
-      ${manage}${xmlBlock}${actionsHtml}
+      ${manage}${rectBox}${xmlBlock}${actionsHtml}
     </div>
   </div>`;
   const body = $('#dlgBody');
@@ -815,6 +857,8 @@ function openDetail(r) {
   });
   const act = async (fnc) => { $('#dlg').close(); toast((await fnc()).text); save(); await renderAll(); };
   body.querySelector('[data-dl="paid"]')?.addEventListener('click', () => act(() => markPaid(r, $('#payMethod').value)));
+  body.querySelector('[data-dl="rectify"]')?.addEventListener('click', () => { $('#dlg').close(); proposeRectify(r); });
+  body.querySelector('[data-view-rec]')?.addEventListener('click', (ev) => { const x = findInvoice(state.records, ev.currentTarget.dataset.viewRec); if (x) { $('#dlg').close(); openDetail(x); } });
   body.querySelector('[data-dl="cancel"]')?.addEventListener('click', () => {
     if (window.confirm(`Cancel ${r.number}? A VeriFactu cancellation record will be added to the chain.`)) act(() => annul(r, $('#cancelReason').value.trim()));
   });
@@ -838,6 +882,20 @@ function openDetail(r) {
 }
 
 // ---------- events ----------
+
+// "Issue corrective invoice" in the detail of a PAID invoice: a prefilled proposal in the agent column. Nothing is issued here;
+// the user reviews it (or asks the agent to change a price) and confirms it with the button on the proposal.
+function proposeRectify(r) {
+  state.chat.push({ role: 'user', text: `Issue a corrective invoice for ${r.number}` });
+  const m = { role: 'agent', text: `Here is a corrective invoice for ${r.number}. It starts from the invoice as billed. Tell me what was wrong, for example "Rectify ${r.number}: the price was 500", and I will update it. Nothing is issued until you confirm.`, actions: [{ type: 'propose_rectify', args: { number: r.number, reason: 'Correction', lines: r.lines.map((l) => ({ description: l.description, qty: l.qty, price: l.price, vat: l.vat })) } }] };
+  state.chat.push(m);
+  log('you', 'proposal', r.number, `Corrective invoice for ${r.number}`);
+  chatFocus = state.chat.length - 2;
+  save();
+  if (!wide.matches) openSheet();
+  else $('#agent').scrollIntoView({ behavior: reducedMotion() ? 'auto' : 'smooth', block: 'nearest' });
+  renderAll();
+}
 
 // Puts a prompt in the agent's box and moves the focus there (the user reviews it and presses Send).
 function askAbout(text) {

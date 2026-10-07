@@ -1,6 +1,6 @@
 // Offline tests for the client-side modules and the design system: no browser, no keys, no network.
 import { readFileSync, readdirSync } from 'node:fs';
-import { buildAlta, buildAnulacion, verifyChain } from '../public/js/verifactu.js';
+import { buildAlta, buildAnulacion, buildRectificativa, verifyChain } from '../public/js/verifactu.js';
 import { buildSample } from '../public/js/ledger.js';
 import { chainBlocks, chainStatus, chainTrackHtml, MAX_BLOCKS } from '../public/js/chain.js';
 import { engineChecks, checksHtml, matchClient } from '../public/js/checks.js';
@@ -14,7 +14,7 @@ import { cleanSpec, defaultBoard, specKey, widgetData, widgetCsv, widgetTableHtm
 import { chartOptions, createChartHub, insightCardHtml, boardCardHtml, widgetBodyHtml, legendRows, legendHtml, mix as mixHex, palette, figures, chartLabel } from '../public/js/insights.js';
 import { eur, md } from '../public/js/fmt.js';
 import { synthReply, detectLang } from '../public/js/say.js';
-import { normalizeProposal } from '../public/js/proposal.js';
+import { normalizeProposal, normalizeRectify } from '../public/js/proposal.js';
 import { prettyJson, displayMsg, jsonHtml, transcriptLines, playTranscript } from '../public/js/terminal.js';
 import { ledgerRows, CHIPS, matchesChip, chipCounts, gridTotals, registerCsv, registerCells, REGISTER_HEADER, numberCellHtml, clientCellHtml, statusCellHtml, actionsCellHtml, csvCell, dueText } from '../public/js/grid.js';
 
@@ -383,6 +383,31 @@ expect('the CSP gained no origin: fonts and styles still come only from Google F
   await early.done;
   const kept = stopped.html.split('class="term-line').length - 1;
   expect('terminal replay: lines arrive in order, one after the other, and Replay can stop a run half way', slow.html.split('class="term-line').length - 1 === lines.length && slow.html.indexOf('t-prompt') < slow.html.indexOf('term-note') && kept > 0 && kept < lines.length && (await (async () => { const before = stopped.html.length; await new Promise((r) => setTimeout(r, 40)); return stopped.html.length === before; })()));
+}
+
+// Corrective invoice (B5): chain block, document, verification link, grid row, proposal paper and the agent's sentence
+{
+  const target = sample.find((r) => r.kind !== 'anulacion' && r.paidAt);
+  const r1 = await buildRectificativa({ issuer, target, number: 'SMP-0009', date: '2026-10-06', lines: [{ description: 'Brand strategy workshop', qty: 1, price: 1000, vat: 21 }], reason: 'Wrong price', prev: sample.at(-1), generatedAt: '2026-10-06T10:00:00+02:00' });
+  const recs = [...sample, r1];
+  const verdict = await verifyChain(recs);
+  const blocks = chainBlocks(recs, verdict);
+  const b = blocks.at(-1);
+  expect('chain: the R1 is its own block that says "R1 · rectifies <number>" and keeps its amount', verdict.ok && b.kind === 'rectificativa' && b.rectifies === target.number && b.amount === r1.total && b.tip.includes(`R1 · rectifies ${target.number}`) && /R1 corrective invoice, rectifies/.test(chainTrackHtml([b])) && chainTrackHtml([b]).includes(`rectifies ${target.number}`));
+  const doc = renderDocument(r1, { qr: () => '' });
+  expect('document: "Factura rectificativa / Corrective invoice" with the reference to the original and its amounts', doc.includes('Factura rectificativa / Corrective invoice') && doc.includes(`>${target.number}<`) && doc.includes('R1, sustitutiva') && doc.includes('Wrong price') && !renderDocument(target, { qr: () => '' }).includes('rectificativa'));
+  const back = await decodeRecord(await encodeRecord(r1));
+  expect('link: a corrective invoice round-trips, keeps its reference and verifies on the verify page', back.type === 'R1' && back.rectifies.number === target.number && back.rectified.base === r1.rectified.base && (await verifyRecord(back)).ok && renderDocument(back, { qr: () => '' }).includes('Corrective invoice'));
+  expect('link: a reference to a rectified invoice with a bad shape is rejected', await decodeRecord(await encodeRecord({ ...r1, rectifies: { ...r1.rectifies, date: 'x' } })).then(() => false, (e) => e instanceof ShareError) && await decodeRecord(await encodeRecord({ ...target, rectifies: r1.rectifies })).then(() => false, (e) => e instanceof ShareError));
+  const rows = ledgerRows(recs, { today: '2026-10-06' });
+  expect('grid: the original is RECTIFIED (out of the totals), the R1 row names it and the open count ignores it', rows.find((r) => r.number === target.number).status === 'RECTIFIED' && rows.find((r) => r.number === target.number).open === false && rows[0].rectifies === target.number && numberCellHtml(rows[0]).includes('R1 · rectifies') && gridTotals(rows).note === '1 voided left out' || gridTotals(rows).note.includes('voided'));
+  const paper = proposalPaperHtml({ recipient: target.recipient, lines: r1.lines, description: '', dueDays: 0 }, { issuer, today: '2026-10-06', rectifies: { number: target.number, total: target.total, reason: 'Wrong price' } });
+  expect('proposal paper: corrective title, the original and the difference computed by the engine', paper.includes('Factura rectificativa') && paper.includes(target.number) && paper.includes('difference'));
+  const fix = normalizeRectify({ number: ' smp-0001 ', reason: 'x'.repeat(300), lines: [{ description: 'A', qty: -1, price: 0, vat: 7 }] });
+  expect('normalizeRectify cleans what the model sends: number upper-cased, reason bounded, lines positive with a Spanish VAT rate', fix.number === 'SMP-0001' && fix.reason.length === 200 && fix.lines[0].qty > 0 && fix.lines[0].price > 0 && fix.lines[0].vat === 21);
+  const said = synthReply([{ type: 'propose_rectify', args: { number: target.number, reason: 'x', lines: [{ description: 'A', qty: 1, price: 1000, vat: 21 }] } }], { records: sample, today: '2026-10-06' });
+  expect('the sentence for a corrective invoice uses the engine totals (old and new)', said.includes(target.number) && said.includes(eur(target.total)) && said.includes(eur(1210)));
+  expect('Activity knows the rectified event', EVENTS.rectified === 'Corrective invoice issued');
 }
 
 console.log(failed ? `${failed} UI check(s) failed` : 'all UI checks passed');

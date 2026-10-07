@@ -33,6 +33,7 @@ export function shareable(r) {
     lines: (r.lines || []).map((l) => ({ description: l.description, qty: l.qty, price: l.price, vat: l.vat })),
     breakdown: (r.breakdown || []).map((b) => ({ rate: b.rate, base: b.base, tax: b.tax })),
     ...(r.dueDate ? { dueDate: r.dueDate } : {}),
+    ...(r.rectifies ? { rectifies: { nif: r.rectifies.nif, number: r.rectifies.number, date: r.rectifies.date }, tipoRectificativa: r.tipoRectificativa || 'S', rectified: { base: r.rectified?.base, tax: r.rectified?.tax }, reason: r.reason || '' } : {}),
     ...(payer ? { payerUrl: payer } : {}),
   };
 }
@@ -91,6 +92,14 @@ export function sanitizeRecord(raw) {
       return { rate: b.rate, base: str(b.base, 16, { re: MONEY }), tax: str(b.tax, 16, { re: MONEY }) };
     }),
   };
+  if (raw.rectifies !== undefined) {
+    const t = raw.rectifies;
+    if (!t || typeof t !== 'object' || rec.type !== 'R1') throw bad();
+    rec.rectifies = { nif: str(t.nif, 20, { min: 1 }), number: str(t.number, 60, { min: 1 }), date: str(t.date, 10, { re: DMY }) };
+    rec.tipoRectificativa = str(raw.tipoRectificativa ?? 'S', 1, { re: /^[SI]$/ });
+    rec.rectified = { base: str(raw.rectified?.base, 16, { re: MONEY }), tax: str(raw.rectified?.tax, 16, { re: MONEY }) };
+    rec.reason = str(raw.reason ?? '', 200);
+  }
   if (raw.dueDate !== undefined) rec.dueDate = str(raw.dueDate, 10, { re: ISO_DAY });
   const payer = safeUrl(raw.payerUrl);
   if (payer && payer.length <= 400) rec.payerUrl = payer;

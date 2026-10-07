@@ -95,11 +95,35 @@ export async function buildAnulacion({ issuer, target, prev = null, reason = '',
   return { ...rec, issuerName: issuer.name, reason: String(reason || '').slice(0, 200), prev: link(prev) };
 }
 
+// Corrective invoice (factura rectificativa, TipoFactura R1, TipoRectificativa S = substitution). It never edits the
+// original: it is a new invoice with the full corrected lines that points at the original through `rectifies`, and
+// carries the base and VAT of the original in `rectified` (ImporteRectificacion). The hash input is the one of any alta,
+// where TipoFactura is already part of the AEAT specification.
+export const isRectificativa = (r) => r?.type === 'R1' && Boolean(r.rectifies);
+export async function buildRectificativa({ issuer, target, number, date, lines, reason = '', prev = null, generatedAt = isoWithOffset() }) {
+  const rec = await buildAlta({
+    issuer,
+    invoice: { number, date, type: 'R1', recipient: target.recipient, description: String(reason || 'Corrective invoice').slice(0, 250), lines },
+    prev,
+    generatedAt,
+  });
+  const base = money(Number(target.total) - Number(target.taxTotal));
+  return {
+    ...rec,
+    rectifies: { nif: target.nif, number: target.number, date: target.date },
+    tipoRectificativa: 'S',
+    rectified: { base, tax: money(target.taxTotal) },
+    reason: String(reason || '').slice(0, 200),
+  };
+}
+
 // Tamper evidence: every record must link to the previous hash and rehash to itself. Invoices must match their
 // lines, and a cancellation must point to an earlier invoice of the chain that was not already cancelled.
 export async function verifyChain(records) {
   const issued = new Set();
   const cancelled = new Set();
+  const rectified = new Set();
+  const totalOf = new Map();
   for (let i = 0; i < records.length; i++) {
     const r = records[i];
     if ((r.prevHash || '') !== (i ? records[i - 1].hash : '')) return { ok: false, index: i, reason: 'broken link to the previous record' };
@@ -107,10 +131,21 @@ export async function verifyChain(records) {
     const id = `${r.nif}|${r.number}|${r.date}`;
     if (isAnulacion(r)) {
       if (!issued.has(id) || cancelled.has(id)) return { ok: false, index: i, reason: 'cancellation of an unknown invoice' };
+      if (rectified.has(id)) return { ok: false, index: i, reason: 'cancellation of a rectified invoice' };
       cancelled.add(id);
     } else {
       if (Array.isArray(r.lines) && totals(r.lines).total !== r.total) return { ok: false, index: i, reason: 'amounts do not match the invoice lines' };
+      if (r.type === 'R1' || r.rectifies) {
+        const t = r.rectifies;
+        const tid = t ? `${t.nif}|${t.number}|${t.date}` : '';
+        if (r.type !== 'R1' || !issued.has(tid)) return { ok: false, index: i, reason: 'rectification of an unknown invoice' };
+        if (cancelled.has(tid) || rectified.has(tid)) return { ok: false, index: i, reason: 'rectification of an invoice already cancelled or rectified' };
+        const was = totalOf.get(tid);
+        if (r.rectified && (r.rectified.base !== was.base || r.rectified.tax !== was.tax)) return { ok: false, index: i, reason: 'rectified amounts do not match the original invoice' };
+        rectified.add(tid);
+      }
       issued.add(id);
+      totalOf.set(id, { base: money(Number(r.total) - Number(r.taxTotal)), tax: money(r.taxTotal) });
     }
   }
   return { ok: true, count: records.length };
@@ -160,6 +195,10 @@ export function anulacionXml(r) {
 
 export const recordXml = (r) => (isAnulacion(r) ? anulacionXml(r) : altaXml(r));
 
+// Corrective invoice block (TipoRectificativa, FacturasRectificadas, ImporteRectificacion), in the order of the
+// published AEAT schema. The structure follows that schema but it is NOT validated against the XSD in this demo.
+const rectificativaXml = (r) => `<sum1:TipoRectificativa>${x(r.tipoRectificativa || 'S')}</sum1:TipoRectificativa><sum1:FacturasRectificadas><sum1:IDFacturaRectificada><sum1:IDEmisorFactura>${x(r.rectifies.nif)}</sum1:IDEmisorFactura><sum1:NumSerieFactura>${x(r.rectifies.number)}</sum1:NumSerieFactura><sum1:FechaExpedicionFactura>${x(r.rectifies.date)}</sum1:FechaExpedicionFactura></sum1:IDFacturaRectificada></sum1:FacturasRectificadas><sum1:ImporteRectificacion><sum1:BaseRectificada>${x(r.rectified?.base)}</sum1:BaseRectificada><sum1:CuotaRectificada>${x(r.rectified?.tax)}</sum1:CuotaRectificada></sum1:ImporteRectificacion>`;
+
 export function altaXml(r) {
   const detalle = r.breakdown.map(desglose).join('');
   const dest = r.recipient?.nif ? `<sum1:Destinatarios><sum1:IDDestinatario><sum1:NombreRazon>${x(r.recipient.name)}</sum1:NombreRazon><sum1:NIF>${x(r.recipient.nif)}</sum1:NIF></sum1:IDDestinatario></sum1:Destinatarios>` : '';
@@ -169,6 +208,7 @@ export function altaXml(r) {
     `  <sum1:IDFactura><sum1:IDEmisorFactura>${x(r.nif)}</sum1:IDEmisorFactura><sum1:NumSerieFactura>${x(r.number)}</sum1:NumSerieFactura><sum1:FechaExpedicionFactura>${x(r.date)}</sum1:FechaExpedicionFactura></sum1:IDFactura>`,
     `  <sum1:NombreRazonEmisor>${x(r.issuerName)}</sum1:NombreRazonEmisor>`,
     `  <sum1:TipoFactura>${x(r.type)}</sum1:TipoFactura>`,
+    r.rectifies ? `  ${rectificativaXml(r)}` : '',
     `  <sum1:DescripcionOperacion>${x(r.description || 'Prestación de servicios')}</sum1:DescripcionOperacion>`,
     dest ? `  ${dest}` : '',
     `  <sum1:Desglose>${detalle}</sum1:Desglose>`,

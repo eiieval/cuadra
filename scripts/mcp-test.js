@@ -81,6 +81,22 @@ try {
   const x = await tool('export_verifactu_xml', {});
   expect('XML export includes the cancellation record', x.data.xml.includes('RegistroAnulacion') && x.data.kinds.join() === 'alta,alta,anulacion');
 
+  const rUnpaid = await tool('rectify_invoice', { number: 'MCP-0002', reason: 'x', lines: inv.lines });
+  expect('rectify_invoice refuses an invoice that is not paid', rUnpaid.error && /Only paid invoices/.test(rUnpaid.text));
+  const rBad = await tool('rectify_invoice', { number: 'MCP-0001', reason: 'x', lines: [{ description: 'x', qty: 1, price: 5, vat: 7 }] });
+  expect('rectify_invoice refuses invalid corrected lines', rBad.error && /VAT/.test(rBad.text));
+  const rect = await tool('rectify_invoice', { number: 'MCP-0001', reason: 'Wrong price', lines: [{ description: 'Consulting', qty: 3, price: 50, vat: 21 }] });
+  expect('rectify_invoice issues an R1 that points at the paid invoice, with the engine totals', !rect.error && rect.data.type === 'R1' && rect.data.rectified === 'MCP-0001' && rect.data.corrective.number === 'MCP-0003' && rect.data.newTotal === '181.50' && rect.data.difference === '-36.30' && /^[0-9A-F]{64}$/.test(rect.data.corrective.hash));
+  const rTwice = await tool('rectify_invoice', { number: 'MCP-0001', reason: 'again', lines: inv.lines });
+  expect('a rectified invoice cannot be rectified again nor cancelled', rTwice.error && /already been rectified/.test(rTwice.text) && (await tool('cancel_invoice', { number: 'MCP-0001', reason: 'x' })).error);
+  const l2 = await tool('list_invoices', { status: 'ALL' });
+  expect('the original shows as RECTIFIED and the R1 as PAID', l2.data.invoices.map((q) => `${q.number}:${q.status}`).join() === 'MCP-0003:PAID,MCP-0002:CANCELLED,MCP-0001:RECTIFIED');
+  const ok2 = await tool('verify_ledger');
+  const x2 = await tool('export_verifactu_xml', { number: 'MCP-0003' });
+  expect('the chain verifies with the corrective invoice and its XML carries FacturasRectificadas', ok2.data.ok && ok2.data.records === 4 && x2.data.xml.includes('<sum1:TipoFactura>R1</sum1:TipoFactura>') && x2.data.xml.includes('<sum1:NumSerieFactura>MCP-0001</sum1:NumSerieFactura>'));
+  const v2 = await tool('vat_return', { quarter: `${now.slice(0, 4)}-Q${Math.ceil(Number(now.slice(5, 7)) / 3)}` });
+  expect('the VAT draft counts the corrective invoice instead of the rectified one', v2.data.boxes['27'] === '31.50');
+
   const stored = JSON.parse(readFileSync(ledgerPath, 'utf8'));
   stored.records[0].total = '9999.00';
   writeFileSync(ledgerPath, JSON.stringify(stored));
@@ -114,7 +130,7 @@ try {
       expect(`${label}: the invoice is issued with collect_with_paypal and comes back sent, with a mock PayPal id, a sandbox payer link, the AEAT verification URL and a SHA-256 hash`, issue?.params.arguments.collect_with_paypal === true && issued?.status === 'SENT' && issued.total === '217.80' && /^INV2-MOCK-\d{4}$/.test(issued.paypal?.id) && /^https:\/\/www\.sandbox\.paypal\.com\//.test(issued.paypal?.payerUrl) && /^https:\/\/prewww2\.aeat\.es\//.test(issued.verifyUrl) && /^[0-9A-F]{64}$/.test(issued.hash));
       expect(`${label}: the draft comes before the issue and issues nothing, the list shows the open invoice, the chain verifies (1 record, ledger path relative)`, byName('draft_invoice')?.structuredContent?.ok === true && byName('draft_invoice').structuredContent.total === '217.80' && byName('list_invoices')?.structuredContent?.invoices?.length === 1 && byName('list_invoices').structuredContent.invoices[0].status === 'SENT' && byName('verify_ledger')?.structuredContent?.ok === true && byName('verify_ledger').structuredContent.records === 1 && byName('verify_ledger').structuredContent.file === 'ledger.json' && byName('verify_ledger').structuredContent.lastHash === issued.hash);
       const toolsReply = lines.find((l) => l.dir === 'in' && l.msg.id === requests.find((r) => r.msg.method === 'tools/list').msg.id).msg.result;
-      expect(`${label}: tools/list carries the 11 tools with their input schemas and annotations`, toolsReply.tools.length === 11 && toolsReply.tools.every((tool) => tool.inputSchema?.type === 'object' && tool.annotations) && toolsReply.tools.some((tool) => tool.name === 'cancel_invoice' && tool.annotations.destructiveHint === true));
+      expect(`${label}: tools/list carries the 12 tools with their input schemas and annotations`, toolsReply.tools.length === 12 && toolsReply.tools.every((tool) => tool.inputSchema?.type === 'object' && tool.annotations) && toolsReply.tools.some((tool) => tool.name === 'cancel_invoice' && tool.annotations.destructiveHint === true));
       const secrets = [/AIza[0-9A-Za-z_-]{35}/, /github_pat_[0-9A-Za-z_]{20,}/, /\bgh[pousr]_[0-9A-Za-z]{30,}/, /\bvc[pk]_[0-9A-Za-z]{20,}/, /-----BEGIN [A-Z ]*PRIVATE KEY-----/, /Bearer\s+[0-9A-Za-z._-]{24,}/, /\bsk-[0-9A-Za-z]{20,}/, /PAYPAL_CLIENT|GEMINI_API|LLM_API|CUADRA_LEDGER/, /"(?:token|secret|password|authorization|api[_-]?key)"/i];
       const paths = [/(?<![A-Za-z0-9])[A-Za-z]:[\\/](?![\\/])/, /\/Users\//, /\/home\//, /\/tmp\//i, /\\Users\\/i, /AppData/i, /\\Temp\\/i, /cuadra-mcp/i, /\.env\b/];
       expect(`${label}: no secret, token, environment variable name or absolute path anywhere in the file`, !secrets.some((re) => re.test(text)) && !paths.some((re) => re.test(text)) && !('env' in t.server) && Object.keys(t.server).join() === 'command,name,version,protocol');

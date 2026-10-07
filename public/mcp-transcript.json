@@ -266,7 +266,8 @@
              "OPEN",
              "OVERDUE",
              "PAID",
-             "CANCELLED"
+             "CANCELLED",
+             "RECTIFIED"
             ],
             "default": "ALL"
            },
@@ -386,7 +387,7 @@
         {
          "name": "cancel_invoice",
          "title": "Cancel invoice",
-         "description": "Annul an unpaid invoice issued by mistake: cancels it in PayPal and appends a VeriFactu RegistroAnulacion to the chain. The original record is never edited. Paid invoices need a corrective invoice instead.",
+         "description": "Annul an unpaid invoice issued by mistake: cancels it in PayPal and appends a VeriFactu RegistroAnulacion to the chain. The original record is never edited. Paid invoices need rectify_invoice instead.",
          "inputSchema": {
           "type": "object",
           "properties": {
@@ -410,6 +411,75 @@
           "destructiveHint": true,
           "idempotentHint": false,
           "openWorldHint": true
+         }
+        },
+        {
+         "name": "rectify_invoice",
+         "title": "Issue corrective invoice",
+         "description": "Issue a corrective invoice (factura rectificativa, VeriFactu type R1, substitution) for a PAID invoice that was wrong. Give the FULL corrected lines, not the difference. The paid invoice is never edited: a new hash-chained RegistroAlta points at it and the original becomes RECTIFIED. Unpaid invoices are cancelled instead. Only after the user confirmed the corrected invoice.",
+         "inputSchema": {
+          "type": "object",
+          "properties": {
+           "number": {
+            "type": "string",
+            "description": "Invoice number, e.g. CU2026-0001"
+           },
+           "reason": {
+            "type": "string",
+            "maxLength": 200,
+            "description": "e.g. wrong price"
+           },
+           "lines": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 20,
+            "items": {
+             "type": "object",
+             "properties": {
+              "description": {
+               "type": "string"
+              },
+              "qty": {
+               "type": "number",
+               "exclusiveMinimum": 0
+              },
+              "price": {
+               "type": "number",
+               "exclusiveMinimum": 0,
+               "description": "Unit price in EUR before VAT"
+              },
+              "vat": {
+               "type": "number",
+               "enum": [
+                0,
+                4,
+                10,
+                21
+               ],
+               "description": "Spanish VAT rate"
+              }
+             },
+             "required": [
+              "description",
+              "qty",
+              "price",
+              "vat"
+             ]
+            }
+           }
+          },
+          "required": [
+           "number",
+           "reason",
+           "lines"
+          ]
+         },
+         "annotations": {
+          "title": "Issue corrective invoice",
+          "readOnlyHint": false,
+          "destructiveHint": false,
+          "idempotentHint": false,
+          "openWorldHint": false
          }
         },
         {
@@ -590,27 +660,27 @@
        "content": [
         {
          "type": "text",
-         "text": "{\n  \"issued\": {\n    \"number\": \"CU2026-0001\",\n    \"date\": \"2026-10-06\",\n    \"client\": \"Acme Studio SL\",\n    \"nif\": \"B12345674\",\n    \"base\": \"180.00\",\n    \"vat\": \"37.80\",\n    \"total\": \"217.80\",\n    \"status\": \"SENT\",\n    \"due\": \"2026-10-21\",\n    \"paypal\": {\n      \"id\": \"INV2-MOCK-0001\",\n      \"status\": \"SENT\",\n      \"payerUrl\": \"https://www.sandbox.paypal.com/invoice/p/#INV2-MOCK-0001\"\n    },\n    \"hash\": \"CF168E62097DB1FF17521613B14EB2B5F56BDCFCCCE2DC99056D26920DFAD92C\",\n    \"verifyUrl\": \"https://prewww2.aeat.es/wlpl/TIKE-CONT/ValidarQR?nif=B76543214&numserie=CU2026-0001&fecha=06-10-2026&importe=217.80\"\n  },\n  \"paypalError\": null\n}"
+         "text": "{\n  \"issued\": {\n    \"number\": \"CU2026-0001\",\n    \"date\": \"2026-10-07\",\n    \"client\": \"Acme Studio SL\",\n    \"nif\": \"B12345674\",\n    \"base\": \"180.00\",\n    \"vat\": \"37.80\",\n    \"total\": \"217.80\",\n    \"status\": \"SENT\",\n    \"due\": \"2026-10-22\",\n    \"paypal\": {\n      \"id\": \"INV2-MOCK-0001\",\n      \"status\": \"SENT\",\n      \"payerUrl\": \"https://www.sandbox.paypal.com/invoice/p/#INV2-MOCK-0001\"\n    },\n    \"hash\": \"687BACC7ADFB3280D363992DEA51BC5E104F23D9AAB99F43F7703E5196F47D2F\",\n    \"verifyUrl\": \"https://prewww2.aeat.es/wlpl/TIKE-CONT/ValidarQR?nif=B76543214&numserie=CU2026-0001&fecha=07-10-2026&importe=217.80\"\n  },\n  \"paypalError\": null\n}"
         }
        ],
        "structuredContent": {
         "issued": {
          "number": "CU2026-0001",
-         "date": "2026-10-06",
+         "date": "2026-10-07",
          "client": "Acme Studio SL",
          "nif": "B12345674",
          "base": "180.00",
          "vat": "37.80",
          "total": "217.80",
          "status": "SENT",
-         "due": "2026-10-21",
+         "due": "2026-10-22",
          "paypal": {
           "id": "INV2-MOCK-0001",
           "status": "SENT",
           "payerUrl": "https://www.sandbox.paypal.com/invoice/p/#INV2-MOCK-0001"
          },
-         "hash": "CF168E62097DB1FF17521613B14EB2B5F56BDCFCCCE2DC99056D26920DFAD92C",
-         "verifyUrl": "https://prewww2.aeat.es/wlpl/TIKE-CONT/ValidarQR?nif=B76543214&numserie=CU2026-0001&fecha=06-10-2026&importe=217.80"
+         "hash": "687BACC7ADFB3280D363992DEA51BC5E104F23D9AAB99F43F7703E5196F47D2F",
+         "verifyUrl": "https://prewww2.aeat.es/wlpl/TIKE-CONT/ValidarQR?nif=B76543214&numserie=CU2026-0001&fecha=07-10-2026&importe=217.80"
         },
         "paypalError": null
        },
@@ -646,7 +716,7 @@
        "content": [
         {
          "type": "text",
-         "text": "{\n  \"company\": {\n    \"name\": \"Estudio Norte SL\",\n    \"nif\": \"B76543214\",\n    \"series\": \"CU2026\"\n  },\n  \"summary\": {\n    \"quarter\": \"2026-Q4\",\n    \"invoices\": 1,\n    \"base\": \"180.00\",\n    \"vat\": \"37.80\",\n    \"unpaid\": 1,\n    \"unpaidTotal\": \"217.80\",\n    \"overdue\": 0,\n    \"overdueTotal\": \"0.00\",\n    \"collected\": \"0.00\"\n  },\n  \"invoices\": [\n    {\n      \"number\": \"CU2026-0001\",\n      \"date\": \"2026-10-06\",\n      \"client\": \"Acme Studio SL\",\n      \"nif\": \"B12345674\",\n      \"base\": \"180.00\",\n      \"vat\": \"37.80\",\n      \"total\": \"217.80\",\n      \"status\": \"SENT\",\n      \"due\": \"2026-10-21\",\n      \"paypal\": {\n        \"id\": \"INV2-MOCK-0001\",\n        \"status\": \"SENT\",\n        \"payerUrl\": \"https://www.sandbox.paypal.com/invoice/p/#INV2-MOCK-0001\"\n      },\n      \"hash\": \"CF168E62097DB1FF17521613B14EB2B5F56BDCFCCCE2DC99056D26920DFAD92C\",\n      \"verifyUrl\": \"https://prewww2.aeat.es/wlpl/TIKE-CONT/ValidarQR?nif=B76543214&numserie=CU2026-0001&fecha=06-10-2026&importe=217.80\"\n    }\n  ],\n  \"clients\": [\n    {\n      \"name\": \"Acme Studio SL\",\n      \"nif\": \"B12345674\",\n      \"email\": \"billing@acme.example\",\n      \"invoices\": 1\n    }\n  ]\n}"
+         "text": "{\n  \"company\": {\n    \"name\": \"Estudio Norte SL\",\n    \"nif\": \"B76543214\",\n    \"series\": \"CU2026\"\n  },\n  \"summary\": {\n    \"quarter\": \"2026-Q4\",\n    \"invoices\": 1,\n    \"base\": \"180.00\",\n    \"vat\": \"37.80\",\n    \"unpaid\": 1,\n    \"unpaidTotal\": \"217.80\",\n    \"overdue\": 0,\n    \"overdueTotal\": \"0.00\",\n    \"collected\": \"0.00\"\n  },\n  \"invoices\": [\n    {\n      \"number\": \"CU2026-0001\",\n      \"date\": \"2026-10-07\",\n      \"client\": \"Acme Studio SL\",\n      \"nif\": \"B12345674\",\n      \"base\": \"180.00\",\n      \"vat\": \"37.80\",\n      \"total\": \"217.80\",\n      \"status\": \"SENT\",\n      \"due\": \"2026-10-22\",\n      \"paypal\": {\n        \"id\": \"INV2-MOCK-0001\",\n        \"status\": \"SENT\",\n        \"payerUrl\": \"https://www.sandbox.paypal.com/invoice/p/#INV2-MOCK-0001\"\n      },\n      \"hash\": \"687BACC7ADFB3280D363992DEA51BC5E104F23D9AAB99F43F7703E5196F47D2F\",\n      \"verifyUrl\": \"https://prewww2.aeat.es/wlpl/TIKE-CONT/ValidarQR?nif=B76543214&numserie=CU2026-0001&fecha=07-10-2026&importe=217.80\"\n    }\n  ],\n  \"clients\": [\n    {\n      \"name\": \"Acme Studio SL\",\n      \"nif\": \"B12345674\",\n      \"email\": \"billing@acme.example\",\n      \"invoices\": 1\n    }\n  ]\n}"
         }
        ],
        "structuredContent": {
@@ -669,21 +739,21 @@
         "invoices": [
          {
           "number": "CU2026-0001",
-          "date": "2026-10-06",
+          "date": "2026-10-07",
           "client": "Acme Studio SL",
           "nif": "B12345674",
           "base": "180.00",
           "vat": "37.80",
           "total": "217.80",
           "status": "SENT",
-          "due": "2026-10-21",
+          "due": "2026-10-22",
           "paypal": {
            "id": "INV2-MOCK-0001",
            "status": "SENT",
            "payerUrl": "https://www.sandbox.paypal.com/invoice/p/#INV2-MOCK-0001"
           },
-          "hash": "CF168E62097DB1FF17521613B14EB2B5F56BDCFCCCE2DC99056D26920DFAD92C",
-          "verifyUrl": "https://prewww2.aeat.es/wlpl/TIKE-CONT/ValidarQR?nif=B76543214&numserie=CU2026-0001&fecha=06-10-2026&importe=217.80"
+          "hash": "687BACC7ADFB3280D363992DEA51BC5E104F23D9AAB99F43F7703E5196F47D2F",
+          "verifyUrl": "https://prewww2.aeat.es/wlpl/TIKE-CONT/ValidarQR?nif=B76543214&numserie=CU2026-0001&fecha=07-10-2026&importe=217.80"
          }
         ],
         "clients": [
@@ -725,13 +795,13 @@
        "content": [
         {
          "type": "text",
-         "text": "{\n  \"ok\": true,\n  \"records\": 1,\n  \"lastHash\": \"CF168E62097DB1FF17521613B14EB2B5F56BDCFCCCE2DC99056D26920DFAD92C\",\n  \"file\": \"ledger.json\"\n}"
+         "text": "{\n  \"ok\": true,\n  \"records\": 1,\n  \"lastHash\": \"687BACC7ADFB3280D363992DEA51BC5E104F23D9AAB99F43F7703E5196F47D2F\",\n  \"file\": \"ledger.json\"\n}"
         }
        ],
        "structuredContent": {
         "ok": true,
         "records": 1,
-        "lastHash": "CF168E62097DB1FF17521613B14EB2B5F56BDCFCCCE2DC99056D26920DFAD92C",
+        "lastHash": "687BACC7ADFB3280D363992DEA51BC5E104F23D9AAB99F43F7703E5196F47D2F",
         "file": "ledger.json"
        },
        "isError": false

@@ -43,6 +43,8 @@ export default async function handler(req, res) {
     invoices: list(c.invoices, 40).map((i) => ({
       number: clean(i?.number, 60), client: clean(i?.client, 120), total: num(i?.total), vat: num(i?.vat),
       status: clean(i?.status, 20), date: clean(i?.date, 10), due: day(i?.due), paypal: Boolean(i?.paypal),
+      // Lines travel only for PAID invoices, so a corrective invoice can start from what was billed.
+      ...(Array.isArray(i?.lines) ? { lines: i.lines.slice(0, 10).map((l) => ({ description: clean(l?.description, 120), qty: num(l?.qty), price: num(l?.price), vat: num(l?.vat) })) } : {}),
     })),
     clients: list(c.clients, 30).map((k) => ({ name: clean(k?.name, 120), nif: clean(k?.nif, 20), email: clean(k?.email, 254) })),
   };

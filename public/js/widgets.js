@@ -3,7 +3,7 @@
 // The model only picks that specification. widgetData() reads the ledger and returns the dataset the chart, the table or
 // the figure shows, so every number in a widget is computed here, from the VeriFactu records and the engine's own
 // statuses, never by the model. Pure functions, no DOM: they run in the browser, on the server and under Node tests.
-import { addDays, cancelledNumbers, daysBetween, invoicesOf, isoFromDmy, quarterOfIso, quarterRange, stateOf } from './ledger.js';
+import { addDays, cancelledNumbers, daysBetween, invoicesOf, isoFromDmy, quarterOfIso, quarterRange, rectifiedNumbers, stateOf } from './ledger.js';
 import { OPEN } from './status.js';
 import { csvCell, eur, esc } from './fmt.js';
 
@@ -116,9 +116,10 @@ export function widgetData(records, rawSpec, today) {
   const primary = keys[0];
   const range = periodRange(spec.period, today, spec.groupBy);
   const cancelled = cancelledNumbers(records);
+  const rectified = rectifiedNumbers(records);
   const items = invoicesOf(records)
-    .map((r) => ({ r, state: stateOf(r, cancelled, today), iso: isoFromDmy(r.date) }))
-    .filter(({ state, iso }) => state !== 'CANCELLED' && (!range.from || (iso >= range.from && iso <= range.to)) && matchesStatus(state, spec.status));
+    .map((r) => ({ r, state: stateOf(r, cancelled, today, rectified), iso: isoFromDmy(r.date) }))
+    .filter(({ state, iso }) => state !== 'CANCELLED' && state !== 'RECTIFIED' && (!range.from || (iso >= range.from && iso <= range.to)) && matchesStatus(state, spec.status));
 
   // The groups that always exist (months, ageing buckets, statuses, the single total) are laid out first, so a chart
   // keeps its axis even where a bucket is empty. Clients and VAT rates only exist where there is something to show.

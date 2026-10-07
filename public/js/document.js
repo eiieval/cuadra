@@ -36,16 +36,18 @@ export function renderDocument(r, { qr = () => '', stamp = '', check = null } = 
   const lines = (r.lines || []).map((l) => `<tr><td>${esc(l.description)}</td><td class="num text-right">${esc(l.qty)}</td><td class="num text-right">${eur(l.price)}</td><td class="num text-right">${esc(l.vat)} %</td><td class="num text-right">${eur(Number(money(l.qty * l.price)))}</td></tr>`).join('');
   const sums = (r.breakdown || []).map((b) => `<div class="doc-row"><span>Base imponible / Taxable base ${esc(b.rate)} %</span>${num(eur(b.base))}</div><div class="doc-row"><span>IVA / VAT ${esc(b.rate)} %</span>${num(eur(b.tax))}</div>`).join('');
   const payer = safeUrl(r.payerUrl ?? r.paypal?.payerUrl);
-  return `<article class="doc" aria-label="Invoice ${esc(r.number)}">${stampHtml}
+  const rect = r.rectifies ? `<section class="doc-party"><div class="doc-label">Rectifica / Rectifies (R1, sustitutiva)</div><div class="doc-name num">${esc(r.rectifies.number)}</div><div class="doc-meta">Issued ${num(r.rectifies.date)} by NIF ${num(r.rectifies.nif)}${r.rectified ? ` · base ${num(eur(r.rectified.base))} · IVA / VAT ${num(eur(r.rectified.tax))}` : ''}</div>${r.reason ? `<div class="doc-meta">Motivo / Reason: ${esc(r.reason)}</div>` : ''}</section>` : '';
+  return `<article class="doc" aria-label="${r.rectifies ? 'Corrective invoice' : 'Invoice'} ${esc(r.number)}">${stampHtml}
     <header class="doc-head">
       <div><div class="doc-name">${esc(r.issuerName)}</div><div class="doc-meta">NIF ${num(r.nif)}</div></div>
       <div class="doc-id">
-        <div class="doc-title">Factura / Invoice</div>
+        <div class="doc-title">${r.rectifies ? 'Factura rectificativa / Corrective invoice' : 'Factura / Invoice'}</div>
         <div class="doc-number num">${esc(r.number)}</div>
         <div class="doc-meta">Fecha / Date ${num(r.date)}</div>
         ${r.dueDate ? `<div class="doc-meta">Vencimiento / Due ${num(fmtDate(r.dueDate) || r.dueDate)}</div>` : ''}
       </div>
     </header>
+    ${rect}
     <section class="doc-party"><div class="doc-label">Cliente / Bill to</div><div class="doc-name">${esc(r.recipient?.name)}</div>${r.recipient?.nif ? `<div class="doc-meta">NIF ${num(r.recipient.nif)}</div>` : ''}</section>
     <div class="doc-scroll"><table class="doc-lines">
       <thead><tr><th>Descripción / Description</th><th class="text-right">Cant. / Qty</th><th class="text-right">Precio / Price</th><th class="text-right">IVA / VAT</th><th class="text-right">Importe / Amount</th></tr></thead>

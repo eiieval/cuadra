@@ -89,6 +89,7 @@ const say = async (page, text) => {
 };
 // Wait until the toast of the previous step is gone, so it does not end up in the next picture.
 const quiet = (page) => page.waitForFunction(() => document.querySelector('#toast')?.classList.contains('hidden'), null, { timeout: 8000 }).catch(() => {});
+const closeAgentSheet = async (page, view) => { if (view.mobile && (await page.evaluate(() => document.body.classList.contains('sheet-open')))) { await page.click('#sheetClose'); await settle(page, 350); } };
 const overflow = (page) => page.evaluate(() => document.documentElement.scrollWidth - innerWidth);
 
 try {
@@ -626,7 +627,7 @@ try {
       await page.locator('#termBody').evaluate((e) => { e.scrollTop = e.scrollHeight * 0.55; });
       await settle(page, 300);
       await page.locator('#agents').screenshot({ path: `${OUT}/13b-mcp-terminal-issue-${view.name}.png` });
-      check(`[${view.name}] agents: the section has the Claude Desktop configuration and the 11 tools next to the terminal, and nothing makes the page scroll sideways`, /mcpServers/.test(await page.locator('#agents pre').innerText()) && /export_verifactu_xml/.test(await page.locator('#agents').innerText()) && (await overflow(page)) <= 0);
+      check(`[${view.name}] agents: the section has the Claude Desktop configuration and the 12 tools next to the terminal, and nothing makes the page scroll sideways`, /mcpServers/.test(await page.locator('#agents pre').innerText()) && /export_verifactu_xml/.test(await page.locator('#agents').innerText()) && (await overflow(page)) <= 0);
       await page.click('#termReplay');
       await settle(page, 700);
       const again = await page.locator('#termBody .term-line').count();
@@ -645,6 +646,73 @@ try {
     await settle(still, 300);
     check('reduced motion: the terminal shows the whole session at once, with no caret, and Replay does the same', whole && (await still.locator('#termBody .term-line').count()) === expected && !(await still.locator('#termBody').evaluate((e) => e.classList.contains('is-playing'))));
     await calm.close();
+  }
+
+  // 14. Corrective invoice (B5): from the detail of a PAID invoice to a proposal in the agent column, the R1 block in the chain,
+  //     the rectified original in the ledger, the document and the verification page of the R1.
+  for (const view of VIEWS) {
+    const ctx = await newContext({ ...view.opts, acceptDownloads: true, permissions: ['clipboard-read', 'clipboard-write'] });
+    await ctx.addInitScript(() => localStorage.setItem('cuadra-tour-v1', '1'));
+    const page = await ctx.newPage();
+    watch(page, `${view.name} rectify`);
+    const shot = async (name, opts = {}) => { await page.screenshot({ path: `${OUT}/${name}-${view.name}.png`, ...opts }); };
+    await page.goto(`${BASE}/`, { waitUntil: 'networkidle' });
+    await settle(page, 1500);
+    if (!view.mobile) await gridReady(page);
+    const paidRow = page.locator(ROWS(view), { hasText: 'Lumen Foods' }).first();
+    await paidRow.locator('[data-do="view"]').click();
+    await settle(page, 700);
+    const offered = (await page.locator('#dlgBody [data-dl="rectify"]').count()) === 1 && (await page.locator('#dlgBody [data-dl="cancel"]').count()) === 0;
+    await page.locator('#dlgBody [data-dl="rectify"]').click();
+    await settle(page, 700);
+    check(`[${view.name}] rectify: a PAID invoice offers "Issue corrective invoice" (and no cancel), which opens a prefilled proposal in the agent column without issuing anything`, offered && (await page.locator('.proposal .paper').count()) === 1 && /Factura rectificativa/i.test(await page.locator('.proposal .paper').innerText()) && (await page.locator('.chain-block[data-i]').count()) === 8 && (await page.locator('#chat [data-act="rectify"]').count()) === 1);
+    // The user (or the model) changes the price: the paper is updated with the engine's figures.
+    const target = await page.evaluate(() => JSON.parse(localStorage.getItem('cuadra-demo-v1')).records.find((r) => r.recipient?.name?.startsWith('Lumen') && r.paidAt).number);
+    await say(page, `Rectify ${target}: the price was 200`);
+    const last = page.locator('.proposal').last();
+    check(`[${view.name}] rectify: asking "Rectify ${target}: the price was 200" gives a corrective proposal with the engine total (2 x 200 + 21% = 484,00 €) and the reference to the paid invoice`, /Factura rectificativa/i.test(await last.innerText()) && /484,00/.test(await last.innerText()) && new RegExp(`rectifies ${target}`).test(await last.innerText()) && /Issue corrective invoice/.test(await last.innerText()));
+    await quiet(page);
+    if (!view.mobile) await page.evaluate(() => { const c = document.querySelector('#chat'); c.scrollTop = c.scrollHeight; });
+    await settle(page, 400);
+    await shot('14-rectify-proposal');
+    await page.locator('#chat [data-act="rectify"]').last().click();
+    await settle(page, 1600);
+    await closeAgentSheet(page, view);
+    check(`[${view.name}] rectify: the R1 enters the chain as its own block "R1 · rectifies ${target}", the chain stays verified (9 blocks)`, (await page.locator('.chain-block.rectificativa').count()) === 1 && (await page.locator('.chain-block[data-i]').count()) === 9 && /Chain verified/.test(await page.locator('#chainStatus').innerText()) && new RegExp(`rectifies ${target}`).test(await page.locator('.chain-block.rectificativa').getAttribute('title')));
+    await page.locator('#chainStrip').scrollIntoViewIfNeeded();
+    await settle(page, 600);
+    await page.locator('#chainStrip').screenshot({ path: `${OUT}/14b-chain-r1-${view.name}.png` });
+    if (!view.mobile) await gridReady(page);
+    const orig = page.locator(ROWS(view), { hasText: target }).filter({ hasText: 'RECTIFIED' });
+    check(`[${view.name}] rectify: the original shows RECTIFIED in the ledger (still there, not edited) next to the R1 row`, (await orig.count()) === 1 && (await page.locator(ROWS(view), { hasText: 'R1' }).count()) >= 1);
+    await page.evaluate(() => document.querySelector('#ledger').scrollIntoView({ block: 'start' }));
+    await settle(page, 600);
+    if (view.mobile) {
+      await page.evaluate(() => { document.querySelector('#openAgent').style.visibility = 'hidden'; });
+      await page.locator('#ledger').screenshot({ path: `${OUT}/14c-rectified-status-${view.name}.png` });
+      await page.evaluate(() => { document.querySelector('#openAgent').style.visibility = ''; });
+    } else await shot('14c-rectified-status');
+    // The R1 is a document and a verification page of its own.
+    await page.locator(ROWS(view), { hasText: 'R1' }).first().locator('[data-do="view"]').click();
+    await settle(page, 800);
+    check(`[${view.name}] rectify: the detail of the R1 is a "Factura rectificativa / Corrective invoice" that names the rectified invoice, and its XML has FacturasRectificadas`, /Factura rectificativa \/ Corrective invoice/i.test(await page.locator('#dlgBody .doc').innerText()) && (await page.locator('#dlgBody .doc').innerText()).includes(target) && /FacturasRectificadas/.test(await page.locator('#dlgBody details pre').evaluate((e) => e.textContent)));
+    await shot('14d-rectify-document');
+    const [ver] = await Promise.all([ctx.waitForEvent('page'), page.click('[data-dl="print"]')]);
+    watch(ver, `${view.name} verify R1`);
+    await ver.waitForLoadState('networkidle');
+    await settle(ver, 900);
+    check(`[${view.name}] rectify: verify.html shows the corrective invoice with the reference and "This document matches its hash"`, /This document matches its hash/.test(await ver.locator('#verdict').innerText()) && /Corrective invoice/i.test(await ver.locator('#paper').innerText()) && (await ver.locator('#paper').innerText()).includes(target));
+    await ver.screenshot({ path: `${OUT}/14e-verify-r1-${view.name}.png`, fullPage: true });
+    await ver.close();
+    await page.keyboard.press('Escape');
+    // The rectified original: no more corrective invoice, no cancellation, and a link to the R1.
+    await page.locator(ROWS(view), { hasText: target }).filter({ hasText: 'RECTIFIED' }).first().locator('[data-do="view"]').click();
+    await settle(page, 700);
+    check(`[${view.name}] rectify: the rectified original offers neither a new corrective invoice nor a cancellation, and points to the R1`, (await page.locator('#dlgBody [data-dl="rectify"]').count()) === 0 && (await page.locator('#dlgBody [data-dl="cancel"]').count()) === 0 && /Rectified by/.test(await page.locator('#dlgBody').innerText()));
+    await page.keyboard.press('Escape');
+    const acts = await page.evaluate(() => JSON.parse(localStorage.getItem('cuadra-demo-v1')).activity.map((e) => e.event));
+    check(`[${view.name}] rectify: the Activity log has the corrective invoice`, acts.includes('rectified'));
+    await ctx.close();
   }
 } finally {
   await browser.close();

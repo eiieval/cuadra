@@ -4,7 +4,7 @@
 import { totals } from './verifactu.js';
 import { findInvoice, returnQuarter } from './ledger.js';
 import { eur } from './fmt.js';
-import { normalizeProposal } from './proposal.js';
+import { normalizeProposal, normalizeRectify } from './proposal.js';
 import { countText, widgetData } from './widgets.js';
 
 // "es" when the person wrote in Spanish: accents and a few words that English does not share.
@@ -25,6 +25,7 @@ const WORDS = {
     collect: (client, number, amount) => `Send ${number} (${client}, ${amount}) with PayPal so the client can pay online.`,
     markPaid: (client, number, amount, how) => `Record the ${how} payment of ${number} (${client}, ${amount}).`,
     cancel: (client, number, amount) => `Cancel ${number} (${client}, ${amount}) with a chained cancellation record.`,
+    rectify: (client, number, amount, total) => `Corrective invoice for ${number} (${client}): ${amount} becomes ${total}. The paid invoice stays as it is.`,
     vat: (quarter) => `Your Modelo 303 draft for ${quarter}.`,
     owes: (count, total) => `Here is who owes you money: ${count}, ${total}`,
     widget: (title, count, total) => `${title}: ${count ? `${count}, ` : ''}${total}`,
@@ -32,7 +33,7 @@ const WORDS = {
     plan: 'Plan',
     parts: {
       reminder: (n) => plural(n, 'reminder'), collect: (n) => `${plural(n, 'collection')} with PayPal`, invoice: (n) => plural(n, 'invoice draft'),
-      markPaid: (n) => `${plural(n, 'payment')} to record`, cancel: (n) => plural(n, 'cancellation'), widget: (n) => plural(n, 'insight'), vat: 'your VAT draft',
+      markPaid: (n) => `${plural(n, 'payment')} to record`, cancel: (n) => plural(n, 'cancellation'), rectify: (n) => plural(n, 'corrective invoice'), widget: (n) => plural(n, 'insight'), vat: 'your VAT draft',
     },
     count: (data) => countText(data),
     unknown: 'Here is my proposal. Review it and confirm.',
@@ -47,6 +48,7 @@ const WORDS = {
     collect: (client, number, amount) => `Enviar ${number} (${client}, ${amount}) por PayPal para que el cliente pague online.`,
     markPaid: (client, number, amount, how) => `Registrar el pago por ${how} de ${number} (${client}, ${amount}).`,
     cancel: (client, number, amount) => `Anular ${number} (${client}, ${amount}) con un registro de anulación encadenado.`,
+    rectify: (client, number, amount, total) => `Factura rectificativa de ${number} (${client}): de ${amount} a ${total}. La factura cobrada no se modifica.`,
     vat: (quarter) => `Tu borrador del Modelo 303 de ${quarter}.`,
     owes: (count, total) => `Esto es lo que te deben: ${count}, ${total}`,
     widget: (title, count, total) => `${title}: ${count ? `${count}, ` : ''}${total}`,
@@ -54,7 +56,7 @@ const WORDS = {
     plan: 'Plan',
     parts: {
       reminder: (n) => plural(n, 'recordatorio'), collect: (n) => `${plural(n, 'cobro')} con PayPal`, invoice: (n) => plural(n, 'borrador de factura', 'borradores de factura'),
-      markPaid: (n) => `${plural(n, 'pago')} por registrar`, cancel: (n) => plural(n, 'anulación', 'anulaciones'), widget: (n) => plural(n, 'gráfico'), vat: 'tu borrador del IVA',
+      markPaid: (n) => `${plural(n, 'pago')} por registrar`, cancel: (n) => plural(n, 'anulación', 'anulaciones'), rectify: (n) => plural(n, 'factura rectificativa', 'facturas rectificativas'), widget: (n) => plural(n, 'gráfico'), vat: 'tu borrador del IVA',
     },
     count: (data) => {
       const n = data.n;
@@ -80,6 +82,7 @@ function one(a, w, { records, today }) {
     case 'propose_collect': { const r = inv(a.args?.number); return w.collect(who(r) || a.args?.number, a.args?.number, eur(r?.total)); }
     case 'propose_mark_paid': { const r = inv(a.args?.number); return w.markPaid(who(r) || a.args?.number, a.args?.number, eur(r?.total), w.method[a.args?.method] || w.method.BANK_TRANSFER); }
     case 'propose_cancel': { const r = inv(a.args?.number); return w.cancel(who(r) || a.args?.number, a.args?.number, eur(r?.total)); }
+    case 'propose_rectify': { const r = inv(a.args?.number); return w.rectify(who(r) || a.args?.number, a.args?.number, eur(r?.total), eur(totals(normalizeRectify(a.args).lines).total)); }
     case 'show_vat_return': return w.vat(/^\d{4}-Q[1-4]$/.test(a.args?.quarter || '') ? a.args.quarter : returnQuarter(today));
     case 'propose_widget': {
       const d = widgetData(records, a.args, today);
@@ -103,6 +106,7 @@ export function synthReply(actions, { records = [], today, lang = 'en' } = {}) {
     count('propose_invoice') && w.parts.invoice(count('propose_invoice')),
     count('propose_mark_paid') && w.parts.markPaid(count('propose_mark_paid')),
     count('propose_cancel') && w.parts.cancel(count('propose_cancel')),
+    count('propose_rectify') && w.parts.rectify(count('propose_rectify')),
     count('propose_widget') && w.parts.widget(count('propose_widget')),
     count('show_vat_return') && w.parts.vat,
   ].filter(Boolean);

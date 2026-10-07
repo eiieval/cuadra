@@ -1,7 +1,7 @@
 // The live chain: one block per VeriFactu record (invoice or cancellation), linked to the previous one.
 // chainBlocks() is a pure function over the records and the verdict of verifyChain(); chainTrackHtml() draws it.
 // Nothing here verifies anything: the verdict comes from verifyChain() and the blocks only show it.
-import { isAnulacion } from './verifactu.js';
+import { isAnulacion, isRectificativa } from './verifactu.js';
 import { esc, eur } from './fmt.js';
 
 export const MAX_BLOCKS = 40;
@@ -43,14 +43,14 @@ export function chainBlocks(records, verify, { newFrom = Infinity, max = MAX_BLO
       else linkIn = 'unverifiable';
     }
     const hash = String(r.hash || '');
-    const base = { kind: isAnulacion(r) ? 'anulacion' : 'alta', index: i, number: String(r.number || ''), state, linkIn, hash, hash6: hash.slice(0, 6), isNew: i >= newFrom };
+    const base = { kind: isAnulacion(r) ? 'anulacion' : isRectificativa(r) ? 'rectificativa' : 'alta', index: i, number: String(r.number || ''), state, linkIn, hash, hash6: hash.slice(0, 6), isNew: i >= newFrom };
     out.push(isAnulacion(r)
       ? { ...base, amount: null, cancels: base.number, tip: '' }
-      : { ...base, amount: String(r.total ?? ''), cancels: null, tip: '' });
+      : { ...base, amount: String(r.total ?? ''), cancels: null, rectifies: isRectificativa(r) ? String(r.rectifies.number) : null, tip: '' });
     out.at(-1).tip = state === 'broken' ? TIPS[verify.reason] || verify.reason
       : state === 'unverifiable' ? `Not verifiable: the chain is broken at ${brokenNumber}`
         : state === 'pending' ? 'Verifying…'
-          : `${base.number} · SHA-256 ${base.hash6}… · verified`;
+          : `${base.number}${out.at(-1).rectifies ? ` · R1 · rectifies ${out.at(-1).rectifies}` : ''} · SHA-256 ${base.hash6}… · verified`;
   }
   return out;
 }
@@ -71,6 +71,7 @@ export const statusHtml = (s) => {
 const SVG = (inner, cls = 'block-ic') => `<svg class="${cls}" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${inner}</svg>`;
 const ICONS = {
   alta: SVG('<rect x="2.25" y="2.25" width="11.5" height="11.5" rx="2.75"/><rect x="5.5" y="5.5" width="5" height="5" rx="1.25" fill="currentColor" stroke="none"/>'),
+  rectificativa: SVG('<path d="M13 5.5A5 5 0 0 0 4.2 4.2L3 5.5"/><path d="M3 2.5v3h3"/><path d="M3 10.5a5 5 0 0 0 8.8 1.3L13 10.5"/><path d="M13 13.5v-3h-3"/>'),
   anulacion: SVG('<path d="M4 2.5v5.5a2.5 2.5 0 0 0 2.5 2.5H12"/><path d="M9.7 8l2.6 2.5-2.6 2.5"/>'),
   broken: SVG('<path d="M6.3 9.7 4.9 11.1a2.3 2.3 0 0 1-3.3-3.3l1.6-1.6"/><path d="M9.7 6.3l1.4-1.4a2.3 2.3 0 0 1 3.3 3.3l-1.6 1.6"/><path d="M6.6 3.4 6.1 1.8M3.4 6.6 1.8 6.1M9.4 12.6l.5 1.6M12.6 9.4l1.6.5"/>'),
 };
@@ -96,10 +97,14 @@ function blockHtml(b) {
   }
   const icon = b.state === 'broken' ? ICONS.broken : ICONS[b.kind];
   const head = b.kind === 'anulacion' ? '<span class="font-semibold">Cancels</span>' : `<span class="num font-semibold">${esc(b.number)}</span>`;
-  const body = b.kind === 'anulacion' ? `<span class="num block-amt text-soft">${esc(b.cancels)}</span>` : `<span class="num block-amt">${esc(eur(b.amount))}</span>`;
-  const label = b.kind === 'anulacion' ? `Cancels ${b.cancels}, cancellation record` : `${b.number}, invoice, ${eur(b.amount)}`;
+  const body = b.kind === 'anulacion' ? `<span class="num block-amt text-soft">${esc(b.cancels)}</span>`
+    : b.kind === 'rectificativa' ? `<span class="num block-amt"><span class="text-soft">R1 ·</span> ${esc(eur(b.amount))}</span>`
+      : `<span class="num block-amt">${esc(eur(b.amount))}</span>`;
+  const label = b.kind === 'anulacion' ? `Cancels ${b.cancels}, cancellation record`
+    : b.kind === 'rectificativa' ? `${b.number}, R1 corrective invoice, rectifies ${b.rectifies}, ${eur(b.amount)}` : `${b.number}, invoice, ${eur(b.amount)}`;
+  const rect = b.kind === 'rectificativa' ? `<span class="num text-[11px] text-soft block-rect" aria-hidden="true">← ${esc(b.rectifies)}</span>` : '';
   return `<li class="chain-item">${link}<button type="button" class="chain-block ${b.kind} ${b.state}${b.isNew ? ' is-new' : ''}" data-i="${b.index}" title="${esc(b.tip)}" aria-label="${esc(`${label}, hash ${b.hash6}, ${WORD[b.state]}. Open details.`)}">
-    <span class="block-top">${icon}${head}</span>${body}
+    <span class="block-top">${icon}${head}</span>${body}${rect}
     <span class="block-foot"><span class="num text-soft">${esc(b.hash6)}</span>${MARK[b.state]}</span>
   </button></li>`;
 }
