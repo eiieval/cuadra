@@ -20,6 +20,7 @@ export const EVENTS = {
   tamper_on: 'Tamper test on',
   tamper_off: 'Tamper test off',
   sample: 'Sample loaded',
+  company: 'Company added',
   reset: 'Ledger reset',
   widget_pinned: 'Widget pinned',
   widget_removed: 'Widget removed',

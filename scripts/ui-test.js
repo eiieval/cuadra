@@ -13,6 +13,8 @@ import { summary, vatReturn } from '../public/js/ledger.js';
 import { cleanSpec, defaultBoard, specKey, widgetData, widgetCsv, widgetTableHtml, periodRange, countText, subtitle, MAX_WIDGETS, TYPES, METRICS, GROUPS } from '../public/js/widgets.js';
 import { chartOptions, createChartHub, insightCardHtml, boardCardHtml, widgetBodyHtml, legendRows, legendHtml, mix as mixHex, palette, figures, chartLabel } from '../public/js/insights.js';
 import { eur, md } from '../public/js/fmt.js';
+import { KEY_BASE, INDEX_KEY, MAX_COMPANIES, SECOND_SAMPLE, buildSecondSample, companyInput, ledgerKey, overview, overviewRow, overviewTotals, parseIndex, withCompany } from '../public/js/companies.js';
+import { validNif } from '../public/js/verifactu.js';
 import { synthReply, detectLang } from '../public/js/say.js';
 import { normalizeProposal, normalizeRectify } from '../public/js/proposal.js';
 import { prettyJson, displayMsg, jsonHtml, transcriptLines, playTranscript } from '../public/js/terminal.js';
@@ -408,6 +410,45 @@ expect('the CSP gained no origin: fonts and styles still come only from Google F
   const said = synthReply([{ type: 'propose_rectify', args: { number: target.number, reason: 'x', lines: [{ description: 'A', qty: 1, price: 1000, vat: 21 }] } }], { records: sample, today: '2026-10-06' });
   expect('the sentence for a corrective invoice uses the engine totals (old and new)', said.includes(target.number) && said.includes(eur(target.total)) && said.includes(eur(1210)));
   expect('Activity knows the rectified event', EVENTS.rectified === 'Corrective invoice issued');
+}
+
+// Gestoría mode (B6): the storage namespace, the index of companies, the second sample company and the numbers of the overview
+{
+  const primary = { nif: 'B76543214', name: 'Estudio Norte SL' };
+  expect('namespace: the primary company keeps the original key, so a saved demo ledger survives; the others are cuadra-demo-v1:<nif>', KEY_BASE === 'cuadra-demo-v1' && ledgerKey('B76543214', 'B76543214') === 'cuadra-demo-v1' && ledgerKey('B48219075', 'B76543214') === 'cuadra-demo-v1:B48219075' && ledgerKey('', 'B76543214') === 'cuadra-demo-v1' && INDEX_KEY === 'cuadra-companies-v1');
+  const idx0 = parseIndex(null, primary);
+  expect('index: without an index there is one company, the primary, and it is the current one (a single-company demo behaves as before)', idx0.list.length === 1 && idx0.current === 'B76543214' && idx0.primary === 'B76543214' && idx0.list[0].name === 'Estudio Norte SL');
+  const idx1 = withCompany(idx0, { nif: SECOND_SAMPLE.nif, name: SECOND_SAMPLE.name });
+  const back = parseIndex(JSON.stringify(idx1), primary);
+  expect('index: adding a company opens it, and the index survives a round trip through storage', back.list.map((c) => c.nif).join() === 'B76543214,B48219075' && back.current === 'B48219075' && back.primary === 'B76543214');
+  expect('index: a damaged index is cleaned (invalid NIFs, duplicates, unknown current company, more than ten) and never loses the primary', (() => {
+    const messy = parseIndex(JSON.stringify({ primary: 'B76543214', current: 'ZZZ', list: [{ nif: 'B76543214' }, { nif: 'B76543214' }, { nif: 'B12345675' }, { nif: '<script>' }, ...Array.from({ length: 30 }, () => ({ nif: 'B12345674' }))] }), primary);
+    return messy.list.map((c) => c.nif).join() === 'B76543214,B12345674' && messy.current === 'B76543214' && parseIndex('not json', primary).list.length === 1 && parseIndex(JSON.stringify({ primary: 'B12345674', list: [] }), primary).primary === 'B12345674';
+  })());
+  expect('add company: a name and a valid NIF become a company; a bad NIF, a repeat, an empty name and the eleventh company are refused', companyInput({ name: ' Taller  Rivas SL ', nif: 'b-48219075' }, idx0).company?.nif === 'B48219075' && companyInput({ name: ' Taller  Rivas SL ', nif: 'b-48219075' }, idx0).company.name === 'Taller Rivas SL' && companyInput({ name: 'X', nif: 'B12345675' }, idx0).error && companyInput({ name: 'X', nif: 'B76543214' }, idx0).error && companyInput({ name: '  ', nif: 'B12345674' }, idx0).error && (() => {
+    const cifs = [];
+    for (let n = 1234567; cifs.length < 9; n++) for (const c of '0123456789') { if (validNif(`B${n}${c}`)) { cifs.push(`B${n}${c}`); break; } }
+    const ten = parseIndex(JSON.stringify({ primary: 'B76543214', list: cifs.map((nif) => ({ nif })) }), primary);
+    return ten.list.length === MAX_COMPANIES && /up to 10/.test(companyInput({ name: 'Eleven', nif: 'B87654323' }, ten).error || '');
+  })());
+  const today = '2026-10-07';
+  const second = await buildSecondSample({ today });
+  const secondRows = second.map((r) => ({ number: r.number, paidAt: r.paidAt, due: r.dueDate }));
+  expect('second sample company: a valid CIF, three invoices to fictional clients with valid NIFs in one chain that verifies', validNif(SECOND_SAMPLE.nif) && SECOND_SAMPLE.name === 'Taller Rivas SL' && second.length === 3 && second.every((r) => r.nif === SECOND_SAMPLE.nif && validNif(r.recipient.nif) && r.sample === true) && (await verifyChain(second)).ok && secondRows.map((r) => r.number).join() === 'TR-0001,TR-0002,TR-0003');
+  const secondState = { company: SECOND_SAMPLE, records: second };
+  const rowS = overviewRow(secondState, today, await verifyChain(second));
+  const sumS = summary(second, today);
+  expect('overview: one paid, one overdue and one open invoice; outstanding and overdue are the ledger figures (the engine summary), the chain verifies', summary(second, today).overdue === 1 && sumS.unpaid === 2 && rowS.outstanding.count === 2 && rowS.outstanding.total === sumS.unpaidTotal && rowS.overdue.count === 1 && rowS.overdue.total === sumS.overdueTotal && Number(rowS.outstanding.total) > Number(rowS.overdue.total) && rowS.chain === 'verified' && rowS.name === 'Taller Rivas SL' && rowS.invoices === 3);
+  expect('overview: the next Modelo 303 deadline is the one of the return that is due now (Q3 on 20 October, 13 days away on 7 October; Q4 on 30 January once Q3 closed)', rowS.deadline.quarter === '2026-Q3' && rowS.deadline.date === '2026-10-20' && rowS.deadline.days === 13 && overviewRow(secondState, '2026-10-21').deadline.quarter === '2026-Q4' && overviewRow(secondState, '2026-10-21').deadline.date === '2027-01-30');
+  const empty = overviewRow({ company: primary, records: [] }, today, null);
+  const forged = structuredClone(second);
+  forged[1].total = '9.99';
+  const rowsAll = await overview([{ company: primary, records: sample }, secondState, { company: primary, records: [] }, { company: { nif: 'B12345674', name: 'Forged SL' }, records: forged }], today);
+  expect('overview: an empty company shows "empty", a tampered ledger shows "broken" at the record, and every company is verified on its own', empty.chain === 'empty' && empty.outstanding.count === 0 && rowsAll.map((r) => r.chain).join() === 'verified,verified,empty,broken' && rowsAll[3].chainAt === 1 && rowsAll[0].invoices === 7);
+  const totals = overviewTotals(rowsAll.slice(0, 2));
+  expect('overview totals: the sums of the cents of each company, no float drift', totals.companies === 2 && totals.outstanding === Number((Number(rowsAll[0].outstanding.total) + Number(rowsAll[1].outstanding.total)).toFixed(2)) && totals.overdueCount === rowsAll[0].overdue.count + rowsAll[1].overdue.count && totals.broken === 0 && overviewTotals(rowsAll).broken === 1);
+  expect('overview: every company is its own ledger (the Taller Rivas sample does not touch the first sample)', rowsAll[0].outstanding.total === summary(sample, today).unpaidTotal && rowsAll[0].outstanding.total !== rowsAll[1].outstanding.total);
+  expect('Activity knows the company event', EVENTS.company === 'Company added');
 }
 
 console.log(failed ? `${failed} UI check(s) failed` : 'all UI checks passed');

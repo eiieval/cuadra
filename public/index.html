@@ -37,13 +37,13 @@
       <h1 class="topbar-name">Cuadra</h1>
       <p class="brand-line topbar-brand">Describe the sale. Confirm. Get paid. Stay compliant.</p>
       <nav class="topbar-actions" aria-label="Company and tools">
-        <span id="company" class="company-chip"></span>
+        <button id="company" type="button" class="company-chip" aria-haspopup="dialog" title="Switch or add a company"></button>
         <a href="#pricing" id="plan" class="badge">Free plan</a>
         <button id="tourBtn" class="icon-btn" aria-label="Replay the quick tour" title="Quick tour">?</button>
         <div class="relative">
           <button id="menuBtn" class="icon-btn" aria-haspopup="menu" aria-expanded="false" aria-controls="menu" aria-label="More actions" title="More actions">⋯</button>
           <div id="menu" class="menu" role="menu" aria-label="More actions" hidden>
-            <div id="menuCompany" class="menu-head lg:hidden"></div>
+            <button id="menuCompany" type="button" class="menu-item menu-company lg:hidden" role="menuitem" aria-haspopup="dialog"></button>
             <button id="sample" class="menu-item" role="menuitem">Load sample quarter</button>
             <button id="reset" class="menu-item" role="menuitem">Start empty</button>
             <div class="menu-sep" role="separator"></div>
@@ -55,6 +55,8 @@
       </nav>
     </div>
   </header>
+
+  <section id="allCompanies" class="mx-auto max-w-7xl px-4 pb-4" aria-labelledby="all-title" hidden></section>
 
   <section id="chainStrip" class="mx-auto max-w-7xl px-4 pb-4" aria-labelledby="chain-title">
     <div class="panel px-4 pb-1 pt-3">
@@ -222,6 +224,7 @@
   <div id="tour" class="tour" role="region" aria-live="polite" aria-label="Quick tour" hidden></div>
   <div id="toast" role="status" aria-live="polite" class="toast hidden"></div>
   <dialog id="dlg" aria-label="Record detail"><div id="dlgBody"></div></dialog>
+  <dialog id="companyDlg" class="dlg-narrow" aria-labelledby="co-title"><div id="companyBody"></div></dialog>
   <footer class="px-4 pb-8 text-center text-[11px] text-soft">Demo on PayPal Sandbox and the AEAT test QR service. Records stay in your browser. Not a certified invoicing system. <a class="underline" href="https://github.com/eiieval/cuadra" target="_blank" rel="noopener noreferrer">Source code</a></footer>
   <script type="module" src="/app.js"></script>
 </body>

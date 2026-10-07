@@ -714,6 +714,81 @@ try {
     check(`[${view.name}] rectify: the Activity log has the corrective invoice`, acts.includes('rectified'));
     await ctx.close();
   }
+
+  // 15. Gestoría mode (B6): one company looks exactly as before; a second company from the switcher, the "All companies" view,
+  //     separate ledgers and Activity, and the choice surviving a reload.
+  for (const view of VIEWS) {
+    const ctx = await newContext(view.opts);
+    await ctx.addInitScript(() => { if (!sessionStorage.getItem('shots-init')) { localStorage.setItem('cuadra-tour-v1', '1'); sessionStorage.setItem('shots-init', '1'); } });
+    const page = await ctx.newPage();
+    watch(page, `${view.name} companies`);
+    const shot = async (name, opts = {}) => { await page.screenshot({ path: `${OUT}/${name}-${view.name}.png`, ...opts }); };
+    const stored = (key) => page.evaluate((k) => { const v = localStorage.getItem(k); return v ? JSON.parse(v) : null; }, key);
+    const companyText = async () => ((await page.locator('#menuCompany').textContent()) || '').trim();
+    const openSwitcher = async () => {
+      if (view.mobile) { await page.click('#menuBtn'); await page.click('#menuCompany'); } else await page.click('#company');
+      await page.waitForSelector('#companyDlg[open]');
+      await settle(page, 400);
+    };
+    await page.goto(`${BASE}/`, { waitUntil: 'networkidle' });
+    await settle(page, 1500);
+    if (!view.mobile) await gridReady(page);
+    const before = await companyText();
+    check(`[${view.name}] one company: the header, the plan chip and the storage are what they always were (Estudio Norte SL, Free plan, no index written, 8 records under cuadra-demo-v1)`, /^Estudio Norte SL · NIF B76543214 · series CU/.test(before) && (await page.locator('#plan').textContent()) === 'Free plan' && (await stored('cuadra-companies-v1')) === null && (await stored('cuadra-demo-v1')).records.length === 8 && (await page.locator('#allCompanies').isHidden()));
+    await openSwitcher();
+    check(`[${view.name}] switcher: lists the one company, offers Add company… and Load a second sample company, and no All companies yet`, (await page.locator('#companyDlg .co-item').count()) === 1 && (await page.locator('#companyDlg [data-co="add"]').count()) === 1 && (await page.locator('#companyDlg [data-co="sample2"]').count()) === 1 && (await page.locator('#companyDlg [data-co="all"]').count()) === 0);
+    await shot('15-company-switcher');
+    await page.locator('#companyDlg [data-co="sample2"]').click();
+    await settle(page, 1500);
+    if (!view.mobile) await gridReady(page);
+    const names = await page.evaluate(() => JSON.parse(localStorage.getItem('cuadra-companies-v1')).list.map((c) => c.name));
+    check(`[${view.name}] second company: Taller Rivas SL opens with three invoices in its own chain, the plan chip reads "Gestoría plan (demo)", and the first ledger is untouched`, /^Taller Rivas SL · NIF B48219075 · series TR/.test(await companyText()) && (await page.locator('.chain-block[data-i]').count()) === 3 && /Chain verified/.test(await page.locator('#chainStatus').innerText()) && (await page.locator('#plan').textContent()) === 'Gestoría plan (demo)' && names.join() === 'Estudio Norte SL,Taller Rivas SL' && (await stored('cuadra-demo-v1')).records.length === 8 && (await stored('cuadra-demo-v1:B48219075')).records.length === 3);
+    await quiet(page);
+    await shot('15b-second-company');
+    // Activity is per company: the new one has its own, the first one's does not mention it.
+    check(`[${view.name}] activity: Taller Rivas SL has its own log (company added, sample loaded)`, /Company added/.test(await page.locator('#activityList').innerText()) && !(await stored('cuadra-demo-v1')).activity.some((e) => e.event === 'company'));
+    await openSwitcher();
+    check(`[${view.name}] switcher: with two companies the open one is marked and All companies appears`, (await page.locator('#companyDlg .co-item').count()) === 2 && (await page.locator('#companyDlg .co-item.is-current').innerText()).includes('Taller Rivas SL') && (await page.locator('#companyDlg [data-co="all"]').count()) === 1);
+    await shot('15c-company-switcher-two');
+    await page.locator('#companyDlg [data-co="all"]').click();
+    await page.waitForSelector('#allCompanies .co-row');
+    await settle(page, 700);
+    const rows = await page.locator('#allCompanies .co-row').evaluateAll((trs) => trs.map((tr) => tr.innerText.replace(/\s+/g, ' ').trim()));
+    check(`[${view.name}] All companies: one row per company with outstanding, overdue, the next Modelo 303 deadline and the chain, and the dashboard is out of the way`, rows.length === 2 && /Estudio Norte SL/.test(rows[0]) && /2006,40 €/.test(rows[0]) && /1716,00 €/.test(rows[0]) && /2026-Q\d/.test(rows[0]) && /Chain verified/.test(rows[0]) && /Taller Rivas SL/.test(rows[1]) && /1350,80 €/.test(rows[1]) && /842,60 €/.test(rows[1]) && /Chain verified/.test(rows[1]) && /in \d+ days?|today|closed/.test(rows[1]) && (await page.locator('main').isHidden()) && (await page.locator('#chainStrip').isHidden()) && (await overflow(page)) <= 0);
+    await shot('15d-all-companies');
+    if (view.mobile) await page.screenshot({ path: `${OUT}/15d-all-companies-full-390.png`, fullPage: true });
+    // Open the first company from the overview: the dashboard returns with its own ledger.
+    await page.locator('#allCompanies [data-switch="B76543214"]').click();
+    await settle(page, 1500);
+    if (!view.mobile) await gridReady(page);
+    check(`[${view.name}] switching back: Estudio Norte SL again, its 8 records and chain, the Taller Rivas ledger kept apart`, /^Estudio Norte SL/.test(await companyText()) && (await page.locator('.chain-block[data-i]').count()) === 8 && (await page.locator('main').isVisible()) && (await page.locator('#allCompanies').isHidden()) && (await stored('cuadra-demo-v1:B48219075')).records.length === 3);
+    // The choice survives a reload.
+    await page.reload({ waitUntil: 'networkidle' });
+    await settle(page, 1200);
+    check(`[${view.name}] reload: the company that was open is open again`, /^Estudio Norte SL/.test(await companyText()) && (await page.locator('#plan').textContent()) === 'Gestoría plan (demo)');
+    await openSwitcher();
+    await page.locator('#companyDlg [data-switch="B48219075"]').click();
+    await settle(page, 1200);
+    await page.reload({ waitUntil: 'networkidle' });
+    await settle(page, 1200);
+    check(`[${view.name}] reload: the second company, when it was the open one, comes back with its three records`, /^Taller Rivas SL/.test(await companyText()) && (await page.locator('.chain-block[data-i]').count()) === 3);
+    // Add a company by hand: a bad NIF is refused with a message, a valid one starts an empty ledger.
+    await openSwitcher();
+    await page.locator('#companyDlg [data-co="add"]').click();
+    await page.fill('#coName', 'Panadería Soto SL');
+    await page.fill('#coNif', 'B12345675');
+    await page.click('#companyForm button[type="submit"]');
+    await settle(page, 300);
+    check(`[${view.name}] add company: an invalid NIF is refused in place, with a message and the dialog still open`, /not valid/.test(await page.locator('#coError').innerText()) && (await page.locator('#companyDlg[open]').count()) === 1);
+    await shot('15e-add-company-error');
+    await page.fill('#coNif', 'B71889026');
+    await page.click('#companyForm button[type="submit"]');
+    await settle(page, 1200);
+    check(`[${view.name}] add company: Panadería Soto SL opens with an empty ledger and three companies are listed`, /^Panadería Soto SL · NIF B71889026/.test(await companyText()) && (await page.locator('.chain-block[data-i]').count()) === 0 && (await page.locator('#ledger').innerText()).includes('Your ledger is empty') && (await stored('cuadra-companies-v1')).list.length === 3);
+    await shot('15f-new-company-empty');
+    check(`[${view.name}] companies: no horizontal scroll`, (await overflow(page)) <= 0);
+    await ctx.close();
+  }
 } finally {
   await browser.close();
   server?.kill();

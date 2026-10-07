@@ -18,6 +18,7 @@ import { startTour, tourSeen } from './js/tour.js';
 import { BADGE, OPEN, statusWord } from './js/status.js';
 import { CHIPS, chipCounts, createLedgerGrid, ledgerRows, registerCsv } from './js/grid.js';
 import { loadVendor } from './js/vendor.js';
+import { INDEX_KEY, KEY_BASE, MAX_COMPANIES, SECOND_SAMPLE, buildSecondSample, companyInput, ledgerKey, overview, overviewTotals, parseIndex, withCompany } from './js/companies.js';
 import { playTranscript, transcriptLines } from './js/terminal.js';
 import { MAX_WIDGETS, cleanSpec, defaultBoard, specKey, widgetCsv, widgetData } from './js/widgets.js';
 import { boardCardHtml, createChartHub, insightCardHtml, readTokens } from './js/insights.js';
@@ -25,7 +26,7 @@ import { boardCardHtml, createChartHub, insightCardHtml, readTokens } from './js
 const $ = (s) => document.querySelector(s);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-const KEY = 'cuadra-demo-v1';
+const KEY = KEY_BASE;
 const METHOD = { BANK_TRANSFER: 'bank transfer', CASH: 'cash', OTHER: 'other method' };
 const EXAMPLES = [
   'Invoice Acme Studio SL (B12345674) for 3 hours of consulting at €60',
@@ -49,6 +50,7 @@ const fresh = () => ({
   widgets: [],
 });
 let tampered = null;
+let viewAll = false; // the "All companies" view replaces the dashboard
 let vatQ = null;
 let chainSig = '';
 let chainCount = 0;
@@ -61,19 +63,32 @@ let flash = null; // { number, at }: the ledger row of a record that has just en
 const FLASH_MS = 1500;
 const verdictKey = (v) => (!v ? 'none' : v.ok ? 'ok' : `bad${v.index}`);
 let statusTimer;
-let state = (() => { try { return JSON.parse(localStorage.getItem(KEY)); } catch { return null; } })();
+const readJson = (key) => { try { return JSON.parse(localStorage.getItem(key)); } catch { return null; } };
+// Companies (Gestoría mode): the ledger saved before this existed is the primary company under `cuadra-demo-v1`; the others
+// live under `cuadra-demo-v1:<nif>`. With one company nothing else is written, so a single-company demo is exactly what it was.
+const savedPrimary = readJson(KEY);
+let index = parseIndex(localStorage.getItem(INDEX_KEY), savedPrimary?.company || { nif: 'B76543214', name: 'Estudio Norte SL' });
+let state = index.current === index.primary ? savedPrimary : readJson(ledgerKey(index.current, index.primary));
+if (!state && index.current !== index.primary) { index = { ...index, current: index.primary }; state = savedPrimary; }
 const firstVisit = !state;
-state = state || fresh();
-state.activity = Array.isArray(state.activity) ? state.activity : [];
-// The Insights board: up to six pinned widget specs. A ledger saved before the board existed gets the default board.
-state.widgets = Array.isArray(state.widgets)
-  ? state.widgets.filter((w) => w && typeof w.id === 'string').slice(0, MAX_WIDGETS).map((w) => ({ id: w.id, ...cleanSpec(w) }))
-  : state.records.length ? defaultBoard().map(withId) : [];
-state.chat = (state.chat || []).filter((m) => m.text !== 'Thinking…');
-for (const m of state.chat) { delete m.running; for (const a of m.actions || []) delete a.busy; }
+// A saved ledger gets what newer versions added: the activity log, the Insights board (up to six pinned widget specs, the
+// default board for a ledger saved before the board existed) and a chat without half-finished turns.
+function adopt(st) {
+  st.activity = Array.isArray(st.activity) ? st.activity : [];
+  st.records = Array.isArray(st.records) ? st.records : [];
+  st.widgets = Array.isArray(st.widgets)
+    ? st.widgets.filter((w) => w && typeof w.id === 'string').slice(0, MAX_WIDGETS).map((w) => ({ id: w.id, ...cleanSpec(w) }))
+    : st.records.length ? defaultBoard().map(withId) : [];
+  st.chat = (st.chat || []).filter((m) => m.text !== 'Thinking…');
+  for (const m of st.chat) { delete m.running; for (const a of m.actions || []) delete a.busy; }
+  return st;
+}
+state = adopt(state || fresh());
 // Append-only activity log: who did what, shown in the Activity panel and exportable as JSON.
 const log = (actor, event, number = '', detail = '') => { state.activity = reduceActivity(state.activity, { actor, event, number, detail }); };
-const save = () => { if (tampered) return; try { localStorage.setItem(KEY, JSON.stringify(state)); } catch { /* storage unavailable */ } };
+const saveIndex = () => { try { localStorage.setItem(INDEX_KEY, JSON.stringify(index)); } catch { /* storage unavailable */ } };
+const save = () => { if (tampered) return; try { localStorage.setItem(ledgerKey(state.company.nif, index.primary), JSON.stringify(state)); } catch { /* storage unavailable */ } };
+const manyCompanies = () => index.list.length > 1;
 
 async function post(url, body) {
   try {
@@ -665,7 +680,7 @@ async function renderChain() {
 function renderPlan() {
   const s = state.subscription;
   const active = s?.status === 'ACTIVE';
-  $('#plan').textContent = active ? `${s.plan === 'team' ? 'Gestoría' : 'Autónomo'} plan` : 'Free plan';
+  $('#plan').textContent = manyCompanies() ? 'Gestoría plan (demo)' : active ? `${s.plan === 'team' ? 'Gestoría' : 'Autónomo'} plan` : 'Free plan';
   document.querySelectorAll('[data-plan]').forEach((b) => {
     const mine = active && b.dataset.plan === s.plan;
     b.disabled = mine;
@@ -778,6 +793,7 @@ async function renderAll() {
   const company = `${state.company.name} · NIF ${state.company.nif} · series ${state.company.series}`;
   $('#company').textContent = company;
   $('#menuCompany').textContent = company;
+  $('#menuCompany').setAttribute('aria-label', `Company: ${company}. Switch or add a company`);
   renderKpis();
   renderBoard();
   renderChat();
@@ -787,6 +803,7 @@ async function renderAll() {
   renderPlan();
   updateFab();
   await renderChain();
+  if (viewAll) await renderOverview();
 }
 
 function download(name, text, type) {
@@ -1079,9 +1096,10 @@ $('#csv').onclick = exportLedgerCsv;
 
 // A new ledger replaces the records and the chat, but never the activity log (it is append-only) or the plan.
 function startOver() {
-  const { activity, subscription } = state;
+  const { activity, subscription, company } = state;
   tampered = null;
   state = fresh();
+  if (manyCompanies()) state.company = company; // an emptied ledger still belongs to the same company
   state.activity = activity;
   if (subscription) state.subscription = subscription;
 }
@@ -1108,6 +1126,179 @@ $('#reset').onclick = async () => {
   save();
   await renderAll();
 };
+
+// ---------- companies (Gestoría mode): a switcher, a second sample company and the "All companies" view ----------
+
+// Each company keeps its own ledger, chain, chat, board and Activity log; the plan belongs to the account, so it travels along.
+const resetView = () => { vatQ = null; chainSig = ''; chainCount = 0; chainFx = null; chainNow = null; chainVerdict = null; ledgerVerdictKey = 'none'; flash = null; chatCount = -1; viewAll = false; applyView(); };
+
+async function switchCompany(nif) {
+  if (nif === state.company.nif) return true;
+  const next = nif === index.primary ? readJson(KEY) : readJson(ledgerKey(nif, index.primary));
+  if (!next?.company) { toast('That ledger is not available in this browser.'); return false; }
+  if (tampered) await setTamper(false);
+  save();
+  const { subscription } = state;
+  state = adopt(next);
+  if (subscription) state.subscription = subscription;
+  index = { ...index, current: nif };
+  saveIndex();
+  resetView();
+  await renderAll();
+  return true;
+}
+
+function applyView() {
+  $('#allCompanies').hidden = !viewAll;
+  $('#chainStrip').hidden = viewAll;
+  document.querySelector('main').hidden = viewAll;
+  document.body.classList.toggle('view-all', viewAll);
+}
+
+async function addCompany(input) {
+  const r = companyInput(input, index);
+  if (r.error) return r;
+  if (tampered) await setTamper(false);
+  save();
+  const { subscription } = state;
+  index = withCompany(index, r.company);
+  state = adopt({ ...fresh(), company: { ...r.company, series: fresh().company.series } });
+  if (subscription) state.subscription = subscription;
+  log('you', 'company', '', `${r.company.name} added`);
+  save();
+  saveIndex();
+  resetView();
+  await renderAll();
+  return { company: r.company };
+}
+
+async function loadSecondSample() {
+  if (index.list.some((c) => c.nif === SECOND_SAMPLE.nif)) return switchCompany(SECOND_SAMPLE.nif);
+  if (index.list.length >= MAX_COMPANIES) return false;
+  if (tampered) await setTamper(false);
+  save();
+  const { subscription } = state;
+  index = withCompany(index, SECOND_SAMPLE);
+  state = adopt({ ...fresh(), company: { ...SECOND_SAMPLE } });
+  if (subscription) state.subscription = subscription;
+  state.records = await buildSecondSample({ today: today() });
+  state.widgets = defaultBoard().map(withId);
+  log('you', 'company', '', `${SECOND_SAMPLE.name} added with a sample quarter`);
+  log('system', 'sample', '', `${state.records.length} records: paid, overdue and open`);
+  save();
+  saveIndex();
+  resetView();
+  await renderAll();
+  return true;
+}
+
+const savedLedger = (c) => (c.nif === state.company.nif ? state : readJson(ledgerKey(c.nif, index.primary))) || { company: c, records: [] };
+
+// One row per company: what is still to collect, what is overdue, the next Modelo 303 deadline and whether the chain verifies.
+let overviewRun = 0;
+async function renderOverview() {
+  const run = ++overviewRun;
+  const states = index.list.map(savedLedger);
+  const rows = await overview(states, today());
+  if (run !== overviewRun || !viewAll) return;
+  const total = overviewTotals(rows);
+  const chainWord = (r, st) => ({ verified: '<span class="text-ok">● Chain verified</span>', empty: '<span class="text-soft">● No records yet</span>', pending: '<span class="text-warn">● Verifying…</span>', broken: `<span class="text-bad">● Broken at ${esc(st.records[r.chainAt]?.number ?? '?')}</span>` })[r.chain];
+  const body = rows.map((r, i) => {
+    const mine = r.nif === state.company.nif;
+    const d = r.deadline;
+    const when = d.days < 0 ? `closed ${fmtDate(d.date)}` : d.days === 0 ? 'today' : `in ${d.days} day${d.days === 1 ? '' : 's'}`;
+    return `<tr class="co-row${mine ? ' is-current' : ''}" data-nif="${esc(r.nif)}">
+      <th scope="row" class="co-name" data-label="Company"><span class="co-title">${esc(r.name)}</span><span class="num co-sub">NIF ${esc(r.nif)} · ${r.invoices} invoice${r.invoices === 1 ? '' : 's'}${mine ? ' · open now' : ''}</span></th>
+      <td data-label="Outstanding"><span class="num co-fig">${eur(r.outstanding.total)}</span><span class="co-sub">${r.outstanding.count} invoice${r.outstanding.count === 1 ? '' : 's'}</span></td>
+      <td data-label="Overdue"><span class="num co-fig${r.overdue.count ? ' text-bad' : ''}">${eur(r.overdue.total)}</span><span class="co-sub">${r.overdue.count} invoice${r.overdue.count === 1 ? '' : 's'}</span></td>
+      <td data-label="Next Modelo 303"><span class="num co-fig">${esc(fmtDate(d.date))}</span><span class="co-sub">${esc(d.quarter)} · ${esc(when)}</span></td>
+      <td data-label="Chain" class="co-chain">${chainWord(r, states[i])}</td>
+      <td class="co-act"><button class="btn-ghost !min-h-9" data-switch="${esc(r.nif)}" aria-label="Open ${esc(r.name)}">${mine ? 'Back to it' : 'Open'}</button></td>
+    </tr>`;
+  }).join('');
+  $('#allCompanies').innerHTML = `<div class="panel p-4">
+    <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
+      <h2 id="all-title" class="text-sm font-semibold">All companies</h2>
+      <span class="text-xs text-soft">${total.companies} compan${total.companies === 1 ? 'y' : 'ies'} · each with its own ledger and hash chain</span>
+      <button class="btn-ghost ml-auto !min-h-8" data-co="dialog">Switch or add</button>
+    </div>
+    <table class="co-table mt-3" aria-labelledby="all-title">
+      <thead><tr><th scope="col">Company</th><th scope="col">Outstanding</th><th scope="col">Overdue</th><th scope="col">Next Modelo 303</th><th scope="col">Chain</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead>
+      <tbody>${body}</tbody>
+    </table>
+    <p class="mt-3 text-[11px] leading-relaxed text-soft">Across all companies: <span class="num text-fg">${eur(total.outstanding)}</span> still to collect, <span class="num ${total.overdueCount ? 'text-bad' : 'text-fg'}">${eur(total.overdue)}</span> overdue in ${total.overdueCount} invoice${total.overdueCount === 1 ? '' : 's'}${total.broken ? `, <span class="text-bad">${total.broken} chain${total.broken === 1 ? '' : 's'} broken</span>` : ''}. Demo: the ledgers stay in this browser; the Gestoría plan covers up to ${MAX_COMPANIES} companies.</p>
+  </div>`;
+}
+
+function showAllCompanies() {
+  if (!manyCompanies()) return;
+  viewAll = true;
+  applyView();
+  closeSheet();
+  renderOverview();
+  window.scrollTo({ top: 0 });
+}
+
+const companyDlg = $('#companyDlg');
+function renderCompanyDlg(form = false, error = '') {
+  const items = index.list.map((c) => {
+    const mine = c.nif === state.company.nif;
+    return `<button type="button" class="co-item${mine ? ' is-current' : ''}" data-switch="${esc(c.nif)}"${mine ? ' aria-current="true"' : ''}><span class="co-item-name">${esc(mine ? state.company.name : c.name)}</span><span class="num text-soft text-xs">NIF ${esc(c.nif)}${mine ? ' · open' : ''}</span></button>`;
+  }).join('');
+  const hasSecond = index.list.some((c) => c.nif === SECOND_SAMPLE.nif);
+  const full = index.list.length >= MAX_COMPANIES;
+  $('#companyBody').innerHTML = `<div class="flex items-center gap-2"><h2 id="co-title" class="text-base font-semibold">Companies</h2><button type="button" class="btn-ghost ml-auto !min-h-8" data-co="close">Close</button></div>
+    <p class="mt-1 text-xs text-soft">Each company has its own ledger, chain, chat and Activity log.</p>
+    <div class="co-list mt-3" role="group" aria-label="Your companies">${items}</div>
+    ${manyCompanies() ? '<button type="button" class="btn-primary mt-3 w-full" data-co="all">All companies</button>' : ''}
+    ${form
+    ? `<form id="companyForm" class="mt-3 space-y-2" novalidate>
+        <label class="block text-xs text-soft" for="coName">Company name</label>
+        <input id="coName" class="field" maxlength="120" autocomplete="off" placeholder="Taller Rivas SL" required>
+        <label class="block text-xs text-soft" for="coNif">NIF, CIF or NIE</label>
+        <input id="coNif" class="field num" maxlength="20" autocomplete="off" placeholder="B48219075" required>
+        <p id="coError" class="text-xs text-bad" role="alert">${esc(error)}</p>
+        <div class="flex gap-2"><button class="btn-primary" type="submit">Add company</button><button class="btn-ghost" type="button" data-co="cancel">Cancel</button></div>
+      </form>`
+    : `<div class="mt-3 flex flex-wrap gap-2"><button type="button" class="btn-ghost" data-co="add"${full ? ' disabled' : ''}>Add company…</button>${hasSecond ? '' : `<button type="button" class="btn-ghost" data-co="sample2"${full ? ' disabled' : ''}>Load a second sample company</button>`}</div>
+       ${hasSecond ? '' : `<p class="mt-2 text-[11px] text-soft">${esc(SECOND_SAMPLE.name)}: a workshop with three invoices, one overdue.</p>`}`}`;
+}
+function openCompanyDlg(form = false) {
+  renderCompanyDlg(form);
+  if (!companyDlg.open) companyDlg.showModal();
+  (companyDlg.querySelector('#coName') || companyDlg.querySelector('.co-item.is-current') || companyDlg.querySelector('button')).focus();
+}
+$('#company').onclick = () => openCompanyDlg();
+$('#menuCompany').onclick = () => openCompanyDlg();
+companyDlg.addEventListener('click', async (ev) => {
+  if (ev.target === companyDlg) return companyDlg.close();
+  const sw = ev.target.closest('[data-switch]');
+  if (sw) { companyDlg.close(); if (await switchCompany(sw.dataset.switch)) toast([bit(state.company.name, 'font-semibold'), ' is open.']); return; }
+  const co = ev.target.closest('[data-co]')?.dataset.co;
+  if (co === 'close') return companyDlg.close();
+  if (co === 'cancel') return renderCompanyDlg(false);
+  if (co === 'add') { renderCompanyDlg(true); return companyDlg.querySelector('#coName').focus(); }
+  if (co === 'all') { companyDlg.close(); return showAllCompanies(); }
+  if (co === 'sample2') { companyDlg.close(); if (await loadSecondSample()) toast([bit(SECOND_SAMPLE.name, 'font-semibold'), ' added with three sample invoices.']); }
+});
+companyDlg.addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  const r = await addCompany({ name: companyDlg.querySelector('#coName').value, nif: companyDlg.querySelector('#coNif').value });
+  if (r.error) {
+    companyDlg.querySelector('#coError').textContent = r.error;
+    companyDlg.querySelector(/NIF|CIF|already/.test(r.error) ? '#coNif' : '#coName').focus();
+    return;
+  }
+  companyDlg.close();
+  toast([bit(r.company.name, 'font-semibold'), ' added. It starts with an empty ledger.']);
+});
+$('#allCompanies').addEventListener('click', async (ev) => {
+  if (ev.target.closest('[data-co="dialog"]')) return openCompanyDlg();
+  const sw = ev.target.closest('[data-switch]');
+  if (!sw) return;
+  if (sw.dataset.switch === state.company.nif) { viewAll = false; applyView(); await renderAll(); return; }
+  await switchCompany(sw.dataset.switch);
+});
 
 // Overflow menu in the top bar: sample quarter, empty ledger and the exports.
 const menu = $('#menu');
