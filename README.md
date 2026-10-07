@@ -43,7 +43,7 @@ The signature of the product is **the living chain**: the book that proves itsel
  "Invoice Acme…" ───► │ chat · ledger · VAT card · pricing  │
                       │ VeriFactu engine (WebCrypto SHA-256)│◄── verifies the chain on every render
                       └──────┬──────────────────┬───────────┘
-                             │ /api/agent       │ /api/paypal (HMAC-bound to the session)
+                             │ /api/agent       │ /api/paypal (HMAC token per invoice)
                              ▼                  ▼
             Gemini tool calling          PayPal REST
             proposals only:              Invoicing v2: create · send · status · remind · cancel · payments
@@ -165,7 +165,7 @@ The agent never types a total: `draft_invoice` computes it, `issue_invoice` appe
 
 ### Webhooks
 
-`api/paypal-webhook.js` receives PayPal's invoice events (paid, cancelled, refunded, updated). It never trusts a delivery: the headers and the event go back to PayPal's `/v1/notifications/verify-webhook-signature` (needs `PAYPAL_WEBHOOK_ID`), verified events are deduplicated by `event_id`, and the last 200 are kept in the memory of the function. The browser asks for the events of its own invoices (`op: "events"`, bound to the session with the same HMAC token as every other operation) inside the PayPal sync, as an accelerator; the polling stays as the fallback. Register the webhook once with `npm run paypal:setup -- --webhook-url https://your-host/api/paypal-webhook`; with `MOCK=1` the script only checks the URL and the mock verifies one known test signature.
+`api/paypal-webhook.js` receives PayPal's invoice events (paid, cancelled, refunded, updated). It never trusts a delivery: the headers and the event go back to PayPal's `/v1/notifications/verify-webhook-signature` (needs `PAYPAL_WEBHOOK_ID`), verified events are deduplicated by `event_id`, and the last 200 are kept in the memory of the function. The browser asks for the events of its own invoices (`op: "events"`, bound to the browser that created the invoice by the same HMAC token as every other operation) inside the PayPal sync, as an accelerator; the polling stays as the fallback. Register the webhook once with `npm run paypal:setup -- --webhook-url https://your-host/api/paypal-webhook`; with `MOCK=1` the script only checks the URL and the mock verifies one known test signature.
 
 This is demo-grade: memory is per function instance and is lost on a restart. In production the events are written to a server-side ledger that updates invoice status, and polling only reconciles.
 
@@ -173,9 +173,9 @@ This is demo-grade: memory is per function instance and is lost on a restart. In
 
 | Plan | Price | For |
 |---|---|---|
-| Free | €0 | 10 invoices a month, VeriFactu records, PayPal collection, AI agent with fair use |
+| Free | €0 | Up to 10 invoices a month (limit not enforced in this demo), VeriFactu records, PayPal collection, AI agent with fair use |
 | Autónomo | €9 / month + VAT | Unlimited invoices, collections agent, Modelo 303 draft, MCP access |
-| Gestoría | €29 / month + VAT | Up to 10 companies (NIFs), accountant access and exports |
+| Gestoría | €29 / month + VAT | Up to 10 companies (NIFs), exports: CSV, XML, activity log |
 
 - **Market.** More than 3 million self-employed workers and over a million companies in Spain must use VeriFactu-compliant software by July 2027. Many invoice from spreadsheets or Word today.
 - **Why they pay.** Compliance becomes mandatory and the fines are large; getting paid faster is the reason they keep paying. Cuadra never takes a cut of payments.
@@ -186,7 +186,7 @@ This is demo-grade: memory is per function instance and is lost on a restart. In
 
 - Human in the loop for every fiscal or payment action; the agent only proposes.
 - PayPal and Gemini credentials live only in server environment variables.
-- Every PayPal invoice and subscription is bound to the browser session that created it with an HMAC token: nobody can read, chase, cancel or mark paid another session's invoices.
+- Each PayPal invoice carries an HMAC token issued to the browser that created it; only that token can read, remind or cancel it.
 - Server-side validation of every invoice: Spanish VAT rates only, valid NIF/CIF/NIE, bounded quantities and prices, totals recomputed.
 - Strict Content-Security-Policy, no third-party scripts: Tailwind is compiled; the QR library, AG Grid Community and AG Charts Community are vendored from the npm registry (`public/vendor/<lib>/VERSION.md` records version, license and SHA-256), `npm test` recomputes their hashes, and the page inserts them with a Subresource Integrity attribute, so a modified file is refused and the fallback takes over.
 - Same-origin checks, JSON-only endpoints, per-IP rate limits, bounded request bodies, generic user-facing errors and redacted server logs.

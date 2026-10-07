@@ -6,9 +6,9 @@
 
 | Plan | Price | For | Why they pay |
 |---|---|---|---|
-| Free | €0 | 10 invoices a month, VeriFactu records, PayPal collection, the agent with fair use | Try it, get the first invoices compliant |
+| Free | €0 | Up to 10 invoices a month (limit not enforced in this demo), VeriFactu records, PayPal collection, the agent with fair use | Try it, get the first invoices compliant |
 | Autónomo | €9 / month + VAT | Unlimited invoices, collections agent, Modelo 303 draft, corrective invoices, MCP access | Compliance becomes mandatory and getting paid faster is the habit |
-| Gestoría | €29 / month + VAT | Up to 10 companies (NIFs), the "All companies" view, exports | One screen for every client's receivables, VAT deadline and chain status |
+| Gestoría | €29 / month + VAT | Up to 10 companies (NIFs), the "All companies" view, exports: CSV, XML, activity log | One screen for every client's receivables, VAT deadline and chain status |
 
 Cuadra never takes a cut of payments. PayPal's own fees apply to the merchant.
 

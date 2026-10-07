@@ -15,7 +15,7 @@ Cuadra is a small system on purpose: one isomorphic engine, two thin server func
                   api/agent.js · lib/agent.js   api/paypal.js · lib/paypal.js
                   re-shapes the context,        validates the invoice again (lib/validate.js),
                   calls the model with tools,   talks to PayPal Invoicing v2 / Subscriptions v1,
-                  returns PROPOSALS only        binds every id to the session with an HMAC
+                  returns PROPOSALS only        gives each invoice an HMAC token
                             │                      │
                             ▼                      ▼
                   Gemini (OpenAI-compatible)   PayPal REST (sandbox in the demo)
@@ -57,7 +57,7 @@ This is a demo whose ledger lives in the browser, so "scales" means "what we wou
 |---|---|---|
 | Storage | `localStorage` per company (browser) or one JSON file (MCP) | A server-side append-only table per issuer (Postgres), one row per record, a unique constraint on `(nif, number)` and on `prevHash`, so the chain cannot fork. The engine stays the same. |
 | Concurrency | One writer per browser tab; the MCP server serialises writes | A single writer per issuer chain (row lock or queue); chain verification becomes incremental from the last verified hash. |
-| Identity | None: a session HMAC binds PayPal ids to a browser | Accounts, per-company roles (owner, adviser) and an audit trail written by the server. |
+| Identity | None: an HMAC token per PayPal invoice, issued to the browser that created it | Accounts, per-company roles (owner, adviser) and an audit trail written by the server. |
 | Payment events | Polling, with an optional webhook accelerator (see the README) | Webhook events written to a server ledger that updates invoice status; polling only for reconciliation. |
 | Compliance | Records and XML, not signed, not sent | Electronic signature (or the VERI*FACTU online mode) and submission to the AEAT web service, with retry and receipt storage. |
 | Model cost | Flash-Lite, roughly 3k tokens in and 300 out per turn (estimate) | Same; the context is bounded (40 invoices) and the model never sees secrets. Cost is linear in turns, not in invoices. |

@@ -269,7 +269,7 @@ expect('per-IP rate limit kicks in (429)', last === 429);
 }
 
 // PayPal webhooks (B7, demo-grade): the signature is verified by PayPal (mock: one known test signature), events are
-// deduplicated by event_id, kept in memory (last 200) and read back per invoice, bound to the session by the HMAC token.
+// deduplicated by event_id, kept in memory (last 200) and read back per invoice, bound to the browser that created the invoice by its HMAC token.
 {
   const { default: webhook } = await import('../api/paypal-webhook.js');
   const events = await import('../lib/events.js');

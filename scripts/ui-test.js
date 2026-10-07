@@ -450,6 +450,14 @@ expect('the CSP gained no origin: fonts and styles still come only from Google F
   expect('R1 accounting: a bigger corrected total adds only the difference as outstanding, with its own due date, in KPI and widget', kB.collected === kBefore.collected && Number(kB.unpaidTotal) === Number(kBefore.unpaidTotal) + 968 && ledgerRows(recsB, { today: '2026-10-06' })[0].outstanding === 968 && widgetData(recsB, { type: 'number', metric: 'outstanding', groupBy: 'none', period: 'all' }, '2026-10-06').value.toFixed(2) === kB.unpaidTotal && bigger.dueDate === '2026-10-21' && renderDocument(bigger, { qr: () => '' }).includes('Pendiente / Outstanding'));
 }
 
+// Pricing and README honesty (judge): the plans promise only what exists, and the same words are on the page, in the README and in MONETIZATION.md
+{
+  const page = read('public/index.html'), readme = read('README.md'), money = read('docs/MONETIZATION.md'), arch = read('docs/ARCHITECTURE.md');
+  expect('pricing: Free says "Up to 10 invoices a month (limit not enforced in this demo)" on the page, in the README and in MONETIZATION.md', [page, readme, money].every((t) => t.includes('Up to 10 invoices a month (limit not enforced in this demo)')) && !/<li>10 invoices a month<\/li>/.test(page));
+  expect('pricing: Gestoría lists "Exports: CSV, XML, activity log" and no accountant access or priority support anywhere', page.includes('<li>Exports: CSV, XML, activity log</li>') && /exports: CSV, XML, activity log/.test(readme) && /exports: CSV, XML, activity log/.test(money) && !/accountant access|priority support/i.test(page + readme + money));
+  expect('README: each PayPal invoice carries an HMAC token issued to the browser that created it, and nothing is "bound to the session"', readme.includes('each PayPal invoice carries an HMAC token issued to the browser that created it; only that token can read, remind or cancel it'.replace('each', 'Each')) && !/bound to the (browser )?session|HMAC-bound to the session/i.test(readme + arch));
+}
+
 // Gestoría mode (B6): the storage namespace, the index of companies, the second sample company and the numbers of the overview
 {
   const primary = { nif: 'B76543214', name: 'Estudio Norte SL' };
