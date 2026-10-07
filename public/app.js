@@ -6,8 +6,8 @@ import {
 
 import { esc, eur, fmtDate, isoToday, md, safeUrl } from './js/fmt.js';
 import { chainBlocks, chainStatus, chainTrackHtml, statusHtml } from './js/chain.js';
-import { engineChecks, checksHtml } from './js/checks.js';
-import { normalizeProposal as normalize, normalizeRectify, proposalPaperHtml } from './js/proposal.js';
+import { engineChecks, checksHtml, blockers, boundsProblems } from './js/checks.js';
+import { normalizeProposal as normalize, normalizeRectify, proposalPaperHtml, proposalActionsHtml } from './js/proposal.js';
 import { detectLang, synthReply } from './js/say.js';
 import { isPlan, planProgress, planSummary, pendingLowRisk, hasHighRisk } from './js/plan.js';
 import { reduceActivity, activityRows, activityHtml } from './js/activity.js';
@@ -315,14 +315,17 @@ async function perform(a, act) {
   const rec = findInvoice(state.records, a.args?.number);
   let r;
   if (act === 'discard') r = { ok: true, text: 'Dismissed.', skipped: true };
-  else if (act === 'issue' || act === 'issue-send') r = await issue(normalize(a.args), act === 'issue-send');
+  else if (act === 'issue' || act === 'issue-send') {
+    const stop = blockers(engineChecks(normalize(a.args), { known: clients(state.records), today: today() }));
+    r = stop.length ? { ok: false, text: `Not issued: ${stop[0]}.` } : await issue(normalize(a.args), act === 'issue-send'); // the server validates again
+  }
   else if (act === 'open-vat') r = { ok: true, text: 'Opened the VAT draft.' };
   else if (act === 'pin') r = pinWidget(a.args);
   else if (!rec) r = { ok: false, text: 'Invoice not found.' };
   else if (act === 'remind') r = await remind(rec);
   else if (act === 'collect') r = await sendWithPaypal(rec);
   else if (act === 'mark-paid') r = await markPaid(rec, METHOD[a.args?.method] ? a.args.method : 'BANK_TRANSFER');
-  else if (act === 'rectify') r = await rectify(rec, a.args);
+  else if (act === 'rectify') r = boundsProblems(normalizeRectify(a.args)).length ? { ok: false, text: `Not issued: ${boundsProblems(normalizeRectify(a.args))[0]}.` } : await rectify(rec, a.args);
   else if (act === 'cancel') r = await annul(rec, String(a.args?.reason || '').slice(0, 200));
   else return;
   Object.assign(a, { done: r.text, ok: r.ok, ...(r.skipped ? { skipped: true } : {}), ...(r.number ? { number: r.number } : {}), ...(r.pinned ? { pinned: true } : {}) });
@@ -424,7 +427,8 @@ function actionCard(a, mi, ai, inPlan = false) {
     if (a.type === 'propose_rectify') {
       const fix = normalizeRectify(a.args);
       const paper = proposalPaperHtml({ recipient: { name: rec.recipient?.name || '', nif: rec.recipient?.nif || '', email: rec.email || '' }, lines: fix.lines, description: '', dueDays: 0 }, { issuer: state.company, today: today(), rectifies: { number: rec.number, total: rec.total, reason: fix.reason } });
-      const note = st === 'RECTIFIED' ? 'Already rectified.' : st !== 'PAID' ? 'Only paid invoices get a corrective invoice. Unpaid ones are cancelled.' : '';
+      const limit = boundsProblems(fix);
+      const note = st === 'RECTIFIED' ? 'Already rectified.' : st !== 'PAID' ? 'Only paid invoices get a corrective invoice. Unpaid ones are cancelled.' : limit.length ? `Cannot be issued: ${limit.join('; ')}.` : '';
       const foot = a.done
         ? `<div class="proposal-result${a.ok === false ? ' is-fail' : a.skipped ? ' is-skipped' : ''}"><span>${esc(a.done)}</span>${a.number ? `<button class="btn-ghost !min-h-8" data-view="${esc(a.number)}">View record</button>` : ''}</div>`
         : note ? `<div class="card-note text-warn">${esc(note)}</div>`
@@ -440,10 +444,12 @@ function actionCard(a, mi, ai, inPlan = false) {
   // An invoice proposal: a small paper document with the actions attached, and the engine's checks underneath.
   const inv = normalize(a.args);
   const paper = proposalPaperHtml(inv, { issuer: state.company, today: today() });
-  const checks = checksHtml(engineChecks(inv, { known: clients(state.records), today: today() }));
+  const checkList = engineChecks(inv, { known: clients(state.records), today: today() });
+  const checks = checksHtml(checkList);
+  const stop = blockers(checkList);
   const foot = a.done
     ? `<div class="proposal-result${a.ok === false ? ' is-fail' : a.skipped ? ' is-skipped' : ''}"><span>${esc(a.done)}</span>${a.number ? `<button class="btn-ghost !min-h-8" data-view="${esc(a.number)}">View record</button>` : ''}</div>`
-    : `<div class="proposal-actions"><button class="btn-primary" data-act="issue-send" data-id="${id}"${a.busy ? ' disabled' : ''}>${a.busy ? 'Working…' : 'Issue + collect with PayPal'}</button><button class="btn-ghost" data-act="issue" data-id="${id}"${a.busy ? ' disabled' : ''}>Issue only</button><button class="btn-ghost" data-act="discard" data-id="${id}"${a.busy ? ' disabled' : ''}>Discard</button></div>`;
+    : proposalActionsHtml(id, { busy: a.busy, blocked: stop });
   return `<div class="proposal${a.done ? ' is-done' : ''}">${paper}${foot}</div>${checks}`;
 }
 
