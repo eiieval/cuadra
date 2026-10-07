@@ -20,13 +20,48 @@ export const rectifiedNumbers = (records) => new Set(records.filter((r) => r?.ty
 export const nextNumber = (records, series) => `${series}-${String(invoicesOf(records).length + 1).padStart(4, '0')}`;
 export const findInvoice = (records, number) => invoicesOf(records).find((r) => r.number === String(number || '').trim().toUpperCase());
 
+const cents = (v) => Math.round(Number(v) * 100);
+// A corrective invoice (R1) replaces a PAID invoice. What the client really paid is on the R1 (paidAmount = the original's
+// total, settledAgainst = its number). Only the positive difference is still to collect; a negative one is a refund
+// that is settled outside Cuadra. Returns null for any other record.
+export function settlementOf(rec) {
+  if (rec?.type !== 'R1' || !rec.rectifies || rec.paidAmount === undefined || rec.paidAmount === null) return null;
+  const diff = cents(rec.total) - cents(rec.paidAmount);
+  return { paid: Number(rec.paidAmount), against: String(rec.settledAgainst || rec.rectifies.number), due: diff > 0 ? diff / 100 : 0, refund: diff < 0 ? -diff / 100 : 0 };
+}
+const EUR = new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR' });
+// Stamps what the ledger needs on a new R1: what the client really paid for the original, which invoice it settles against and when the difference falls due.
+export function stampRectificativa(record, original, today, dueDays = 15) {
+  return Object.assign(record, { email: original.email, paidAmount: String(original.total), settledAgainst: original.number, dueDate: addDays(today, dueDays) });
+}
+export const refundNote = (rec) => {
+  const s = settlementOf(rec);
+  return s?.refund ? `Refund due ${EUR.format(s.refund)} · settle outside Cuadra` : '';
+};
+
 // One status per invoice, in priority order: cancelled, rectified, paid, overdue, then PayPal's own status, else ISSUED.
 export function stateOf(rec, cancelled, today, rectified = new Set()) {
   if (cancelled.has(rec.number) || rec.paypal?.status === 'CANCELLED') return 'CANCELLED';
   if (rectified.has(rec.number)) return 'RECTIFIED';
   if (rec.paidAt || PAID.includes(rec.paypal?.status)) return 'PAID';
+  const st = settlementOf(rec);
+  if (st && st.due === 0) return 'PAID'; // the corrected total is already covered by what the client paid
   if (rec.dueDate && today > rec.dueDate) return 'OVERDUE';
   return rec.paypal?.status || 'ISSUED';
+}
+
+// What an invoice still has to collect and what it has collected (euros), given its status. An R1 keeps what the
+// original collected, so issuing it never changes "Collected": only the positive difference becomes outstanding.
+export function outstandingOf(rec, state) {
+  if (DONE.includes(state)) return 0;
+  const st = settlementOf(rec);
+  return st ? st.due : Number(rec.total);
+}
+export function collectedOf(rec, state) {
+  if (state === 'CANCELLED' || state === 'RECTIFIED') return 0;
+  const st = settlementOf(rec);
+  if (!st) return state === 'PAID' ? Number(rec.total) : 0;
+  return rec.paidAt ? Math.max(Number(rec.total), st.paid) : st.paid;
 }
 
 export const quarterOfIso = (iso) => `${iso.slice(0, 4)}-Q${Math.ceil(Number(iso.slice(5, 7)) / 3)}`;
@@ -67,17 +102,16 @@ export function summary(records, today) {
   const states = list.map((r) => ({ r, s: stateOf(r, cancelled, today, rectified) }));
   const open = states.filter((x) => !DONE.includes(x.s));
   const overdue = states.filter((x) => x.s === 'OVERDUE');
-  const paid = states.filter((x) => x.s === 'PAID');
   return {
     quarter,
     invoices: inQ.length,
     base: money(sum(inQ, baseOf)),
     vat: money(sum(inQ, (r) => Number(r.taxTotal))),
     unpaid: open.length,
-    unpaidTotal: money(sum(open, (x) => Number(x.r.total))),
+    unpaidTotal: money(sum(open, (x) => outstandingOf(x.r, x.s))),
     overdue: overdue.length,
-    overdueTotal: money(sum(overdue, (x) => Number(x.r.total))),
-    collected: money(sum(paid, (x) => Number(x.r.total))),
+    overdueTotal: money(sum(overdue, (x) => outstandingOf(x.r, x.s))),
+    collected: money(sum(states, (x) => collectedOf(x.r, x.s))),
   };
 }
 

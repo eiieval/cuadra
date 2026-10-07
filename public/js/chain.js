@@ -2,6 +2,7 @@
 // chainBlocks() is a pure function over the records and the verdict of verifyChain(); chainTrackHtml() draws it.
 // Nothing here verifies anything: the verdict comes from verifyChain() and the blocks only show it.
 import { isAnulacion, isRectificativa } from './verifactu.js';
+import { refundNote } from './ledger.js';
 import { esc, eur } from './fmt.js';
 
 export const MAX_BLOCKS = 40;
@@ -46,11 +47,11 @@ export function chainBlocks(records, verify, { newFrom = Infinity, max = MAX_BLO
     const base = { kind: isAnulacion(r) ? 'anulacion' : isRectificativa(r) ? 'rectificativa' : 'alta', index: i, number: String(r.number || ''), state, linkIn, hash, hash6: hash.slice(0, 6), isNew: i >= newFrom };
     out.push(isAnulacion(r)
       ? { ...base, amount: null, cancels: base.number, tip: '' }
-      : { ...base, amount: String(r.total ?? ''), cancels: null, rectifies: isRectificativa(r) ? String(r.rectifies.number) : null, tip: '' });
+      : { ...base, amount: String(r.total ?? ''), cancels: null, rectifies: isRectificativa(r) ? String(r.rectifies.number) : null, refund: refundNote(r), tip: '' });
     out.at(-1).tip = state === 'broken' ? TIPS[verify.reason] || verify.reason
       : state === 'unverifiable' ? `Not verifiable: the chain is broken at ${brokenNumber}`
         : state === 'pending' ? 'Verifying…'
-          : `${base.number}${out.at(-1).rectifies ? ` · R1 · rectifies ${out.at(-1).rectifies}` : ''} · SHA-256 ${base.hash6}… · verified`;
+          : `${base.number}${out.at(-1).rectifies ? ` · R1 · rectifies ${out.at(-1).rectifies}` : ''} · SHA-256 ${base.hash6}… · verified${out.at(-1).refund ? ` · ${out.at(-1).refund}` : ''}`;
   }
   return out;
 }

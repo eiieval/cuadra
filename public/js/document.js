@@ -3,6 +3,7 @@
 // footer. Every field is escaped; the AEAT QR is rebuilt from the hashed fields and the PayPal QR only exists for a
 // payer link that passes safeUrl(), so a hostile record cannot make the page show or encode anything else.
 import { isAnulacion, money, qrUrl } from './verifactu.js';
+import { settlementOf, refundNote } from './ledger.js';
 import { esc, eur, fmtDate, safeUrl } from './fmt.js';
 
 const num = (v) => `<span class="num">${esc(v)}</span>`;
@@ -17,6 +18,13 @@ const chainFoot = (r, check) => `<footer class="doc-foot-text">
   <div><span class="doc-label">Generado / Generated</span><div class="num doc-hash">${esc(r.generatedAt)}</div></div>
   ${check ? `<div class="doc-check ${check.ok ? 'is-ok' : 'is-bad'}">${check.ok ? 'Hash check in the browser: matches' : 'Hash check in the browser: DOES NOT MATCH'}${check.at ? ` · ${esc(check.at)}` : ''}</div>` : ''}
 </footer>`;
+
+// Corrective invoices only, and only where the ledger knows what was paid: what the client paid on the original and what is left.
+const settle = (r) => {
+  const s = settlementOf(r);
+  if (!s) return '';
+  return `<div class="doc-row"><span>Ya cobrado en ${esc(s.against)} / Already paid on ${esc(s.against)}</span>${num(eur(s.paid))}</div>${s.refund ? `<div class="doc-row"><span>${esc(refundNote(r))}</span>${num(eur(s.refund))}</div>` : `<div class="doc-row"><span>Pendiente / Outstanding</span>${num(eur(s.due))}</div>`}`;
+};
 
 // r: a record (live from the ledger, or rebuilt by share.js). opts.qr: text -> SVG string. opts.stamp: a word printed
 // across the document ("CANCELLED", "ALTERED"). opts.check: { ok, at } adds the hash-check line to the footer.
@@ -53,7 +61,7 @@ export function renderDocument(r, { qr = () => '', stamp = '', check = null } = 
       <thead><tr><th>Descripción / Description</th><th class="text-right">Cant. / Qty</th><th class="text-right">Precio / Price</th><th class="text-right">IVA / VAT</th><th class="text-right">Importe / Amount</th></tr></thead>
       <tbody>${lines}</tbody>
     </table></div>
-    <section class="doc-totals">${sums}<div class="doc-row doc-total"><span>Total</span>${num(eur(r.total))}</div></section>
+    <section class="doc-totals">${sums}<div class="doc-row doc-total"><span>Total</span>${num(eur(r.total))}</div>${settle(r)}</section>
     <footer class="doc-foot">
       ${qrFigure(qr(qrUrl(r)), 'Verify at AEAT', 'VERI*FACTU')}
       ${payer ? qrFigure(qr(payer), 'Pay with PayPal', 'Scan to pay online') : ''}

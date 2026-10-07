@@ -9,7 +9,7 @@ import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 import { loadEnv } from '../lib/env.js';
 import { buildAlta, buildAnulacion, buildRectificativa, verifyChain, recordXml, validNif, isAnulacion } from '../public/js/verifactu.js';
-import { stateOf, summary, vatReturn, returnQuarter, cancelledNumbers, rectifiedNumbers, invoicesOf, findInvoice, nextNumber, addDays, daysBetween, isoFromDmy, clients } from '../public/js/ledger.js';
+import { stateOf, summary, vatReturn, returnQuarter, cancelledNumbers, rectifiedNumbers, invoicesOf, findInvoice, nextNumber, addDays, daysBetween, isoFromDmy, clients, stampRectificativa, settlementOf, outstandingOf } from '../public/js/ledger.js';
 import { cleanInvoice } from '../lib/validate.js';
 import * as paypal from '../lib/paypal.js';
 
@@ -71,7 +71,7 @@ const stateIn = (r, records) => stateOf(r, cancelledNumbers(records), today(), r
 const view = (r, records) => ({
   number: r.number, date: isoFromDmy(r.date), client: r.recipient?.name || '', nif: r.recipient?.nif || '',
   base: (Number(r.total) - Number(r.taxTotal)).toFixed(2), vat: r.taxTotal, total: r.total,
-  status: stateIn(r, records), due: r.dueDate || null, paypal: r.paypal?.id ? { id: r.paypal.id, status: r.paypal.status, payerUrl: r.paypal.payerUrl || null } : null,
+  status: stateIn(r, records), outstanding: outstandingOf(r, stateIn(r, records)).toFixed(2), due: r.dueDate || null, paypal: r.paypal?.id ? { id: r.paypal.id, status: r.paypal.status, payerUrl: r.paypal.payerUrl || null } : null,
   hash: r.hash, verifyUrl: r.qr,
 });
 const need = (ledger, number) => {
@@ -263,9 +263,14 @@ const TOOLS = {
       const { problems, invoice } = cleanInvoice({ number, date: today(), recipient: rec.recipient, lines: a.lines, issuerName: ledger.company.name });
       if (problems.length) throw new ToolError(`Invalid corrected invoice: ${problems.join('; ')}`);
       const record = await buildRectificativa({ issuer: ledger.company, target: rec, number, date: invoice.date, lines: invoice.lines, reason: String(a.reason || 'Correction').slice(0, 200), prev: ledger.records.at(-1) });
-      Object.assign(record, { email: rec.email, paidAt: rec.paidAt || today() });
+      stampRectificativa(record, rec, today());
       ledger.records.push(record);
-      return { rectified: rec.number, corrective: view(record, ledger.records), type: 'R1', previousTotal: rec.total, newTotal: record.total, difference: (Number(record.total) - Number(rec.total)).toFixed(2), note: 'The difference is settled with the client outside Cuadra.' };
+      const set = settlementOf(record);
+      return {
+        rectified: rec.number, corrective: view(record, ledger.records), type: 'R1', previousTotal: rec.total, newTotal: record.total,
+        difference: (Number(record.total) - Number(rec.total)).toFixed(2), alreadyPaid: set.paid.toFixed(2), outstanding: set.due.toFixed(2), refundDue: set.refund.toFixed(2),
+        note: set.refund ? `The client paid more than the corrected total: refund ${set.refund.toFixed(2)} EUR is due and is settled outside Cuadra. The corrective invoice is PAID.` : set.due ? `${set.due.toFixed(2)} EUR is now outstanding on the corrective invoice (due ${record.dueDate}). What was already collected does not change.` : 'The corrected total equals what was paid: nothing to collect or refund.',
+      };
     }),
   },
   vat_return: {

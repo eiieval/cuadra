@@ -4,7 +4,7 @@
 //  - createLedgerGrid(): the grid itself, built only when the vendored library is there (public/vendor/ag-grid).
 // Every number the grid shows comes from the ledger records and the engine; the grid only sorts, filters and draws.
 import { isAnulacion, money } from './verifactu.js';
-import { cancelledNumbers, rectifiedNumbers, stateOf } from './ledger.js';
+import { cancelledNumbers, rectifiedNumbers, stateOf, outstandingOf, refundNote } from './ledger.js';
 import { csvCell, csvPlain, esc, eur, fmtDate } from './fmt.js';
 import { BADGE, OPEN, statusWord } from './status.js';
 
@@ -24,7 +24,7 @@ export function ledgerRows(records, { today, flashNumber = '', brokenAt = -1 } =
     return {
       ...common, kind: 'alta', client: String(r.recipient?.name || ''), nif: String(r.recipient?.nif || ''),
       total: String(r.total), totalNum: Number(r.total), base: money(Number(r.total) - Number(r.taxTotal)), vat: String(r.taxTotal),
-      status, open: OPEN(status), paypal: Boolean(r.paypal?.id), paypalError: String(r.paypal?.error || ''), due: String(r.dueDate || ''), reason: '',
+      status, open: OPEN(status), outstanding: outstandingOf(r, status), refund: refundNote(r), paypal: Boolean(r.paypal?.id), paypalError: String(r.paypal?.error || ''), due: String(r.dueDate || ''), reason: '',
     };
   }).reverse();
 }
@@ -119,7 +119,7 @@ export function numberCellHtml(row) {
 export const totalCellHtml = (t) => `<span class="g-total-label">${esc(t.label)}</span>${t.note ? `<span class="g-note"> · ${esc(t.note)}</span>` : ''}`;
 
 export function clientCellHtml(row) {
-  const sub = [row.rectifies ? `R1 · rectifies ${row.rectifies}` : row.nif, row.sample ? 'sample' : ''].filter(Boolean).join(' · ');
+  const sub = [row.rectifies ? `R1 · rectifies ${row.rectifies}` : row.nif, row.refund, row.sample ? 'sample' : ''].filter(Boolean).join(' · ');
   return `<span class="g-client"><span class="g-name" title="${esc(row.client)}">${esc(row.client)}</span>${sub ? `<span class="g-sub num">${esc(sub)}</span>` : ''}</span>`;
 }
 

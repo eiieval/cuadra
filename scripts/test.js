@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import vm from 'node:vm';
 import { altaHashInput, anulacionHashInput, sha256Hex, buildAlta, buildAnulacion, verifyChain, buildRectificativa, isRectificativa, qrUrl, totals, validNif, altaXml, recordXml } from '../public/js/verifactu.js';
-import { stateOf, summary, vatReturn, returnQuarter, filingDeadline, clients, cancelledNumbers, rectifiedNumbers, buildSample, nextNumber, findInvoice } from '../public/js/ledger.js';
+import { stateOf, summary, vatReturn, returnQuarter, filingDeadline, clients, cancelledNumbers, rectifiedNumbers, buildSample, nextNumber, findInvoice, stampRectificativa, settlementOf, refundNote, outstandingOf, collectedOf } from '../public/js/ledger.js';
 import { VENDOR, loadVendor } from '../public/js/vendor.js';
 
 let failed = 0;
@@ -71,6 +71,24 @@ const paidSt = stateOf(paidOne, new Set(), '2026-10-05');
 expect('PAID cannot be cancelled by the app rules but is rectifiable: its state is PAID, and PAID turns RECTIFIED only through an R1', paidSt === 'PAID' && stateOf(paidOne, new Set(), '2026-10-05', new Set(['T-0002'])) === 'RECTIFIED');
 const sumR = summary(withR1, '2026-10-05');
 expect('totals count the corrective invoice instead of the rectified one', sumR.invoices === 3 && sumR.base === '560.00' && summary(chain, '2026-10-05').base === '600.00');
+
+// 1c. Corrective-invoice accounting: an R1 never changes what was collected; only a positive difference is outstanding
+const paidAlta = async (number, lines, prev) => ({ ...(await buildAlta({ issuer, invoice: { number, date: '2026-10-04', recipient: { name: 'Acme', nif: 'B12345674' }, lines }, prev, generatedAt: '2026-10-04T10:00:00+02:00' })), dueDate: '2026-10-19', paidAt: '2026-10-04' });
+const upA = await paidAlta('U-0001', [{ description: 'Work', qty: 1, price: 340, vat: 10 }], null);
+const baseL = [upA];
+const upR = stampRectificativa(await buildRectificativa({ issuer, target: upA, number: 'U-0002', date: '2026-10-05', lines: [{ description: 'Work', qty: 1, price: 10400, vat: 0 }], reason: 'Wrong price', prev: upA, generatedAt: '2026-10-05T10:00:00+02:00' }), upA, '2026-10-05');
+const sBefore = summary(baseL, '2026-10-05'), sUp = summary([upA, upR], '2026-10-05');
+expect('R1 374 -> 10400: the R1 carries paidAmount 374 and settledAgainst, due date 15 days on', upA.total === '374.00' && upR.total === '10400.00' && upR.paidAmount === '374.00' && upR.settledAgainst === 'U-0001' && upR.dueDate === '2026-10-20' && !upR.paidAt);
+expect('R1 374 -> 10400 leaves Collected unchanged', sBefore.collected === '374.00' && sUp.collected === '374.00');
+expect('R1 374 -> 10400 adds 10026.00 outstanding, as one open invoice', sBefore.unpaidTotal === '0.00' && sUp.unpaidTotal === '10026.00' && sUp.unpaid === 1 && settlementOf(upR).due === 10026 && outstandingOf(upR, 'ISSUED') === 10026);
+expect('the open R1 goes overdue with the outstanding difference only, after its own due date', summary([upA, upR], '2026-10-21').overdueTotal === '10026.00' && stateOf(upR, new Set(), '2026-10-21', new Set(['U-0001'])) === 'OVERDUE' && stateOf(upR, new Set(), '2026-10-05', new Set(['U-0001'])) === 'ISSUED');
+expect('paying the difference collects the whole corrected total', summary([upA, { ...upR, paidAt: '2026-10-08' }], '2026-10-09').collected === '10400.00' && collectedOf({ ...upR, paidAt: '2026-10-08' }, 'PAID') === 10400);
+const dnA = await paidAlta('D-0001', [{ description: 'Work', qty: 1, price: 500, vat: 21 }], null);
+const dnR = stampRectificativa(await buildRectificativa({ issuer, target: dnA, number: 'D-0002', date: '2026-10-05', lines: [{ description: 'Work', qty: 1, price: 400, vat: 21 }], reason: 'Discount', prev: dnA, generatedAt: '2026-10-05T10:00:00+02:00' }), dnA, '2026-10-05');
+const sDn = summary([dnA, dnR], '2026-10-05');
+expect('R1 605 -> 484 is PAID with a refund of 121.00 settled outside Cuadra', dnA.total === '605.00' && dnR.total === '484.00' && stateOf(dnR, new Set(), '2026-10-05', new Set(['D-0001'])) === 'PAID' && settlementOf(dnR).refund === 121 && /^Refund due 121,00.*settle outside Cuadra$/.test(refundNote(dnR)));
+expect('R1 605 -> 484 keeps Collected at 605, nothing outstanding, and the VAT draft counts the R1', sDn.collected === '605.00' && sDn.unpaidTotal === '0.00' && sDn.unpaid === 0 && vatReturn([dnA, dnR], '2026-Q4').boxes['27'] === '84.00');
+expect('an ordinary invoice or an R1 without settlement data keeps its old accounting', settlementOf(upA) === null && refundNote(upA) === '' && outstandingOf(upA, 'OVERDUE') === 374 && collectedOf(upA, 'PAID') === 374);
 
 // 2. Ledger views: status, quarter figures, Modelo 303 draft, clients and the sample quarter
 const sample = await buildSample({ issuer: { ...issuer, series: 'SMP' }, today: '2026-10-04' });

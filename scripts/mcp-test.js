@@ -86,7 +86,7 @@ try {
   const rBad = await tool('rectify_invoice', { number: 'MCP-0001', reason: 'x', lines: [{ description: 'x', qty: 1, price: 5, vat: 7 }] });
   expect('rectify_invoice refuses invalid corrected lines', rBad.error && /VAT/.test(rBad.text));
   const rect = await tool('rectify_invoice', { number: 'MCP-0001', reason: 'Wrong price', lines: [{ description: 'Consulting', qty: 3, price: 50, vat: 21 }] });
-  expect('rectify_invoice issues an R1 that points at the paid invoice, with the engine totals', !rect.error && rect.data.type === 'R1' && rect.data.rectified === 'MCP-0001' && rect.data.corrective.number === 'MCP-0003' && rect.data.newTotal === '181.50' && rect.data.difference === '-36.30' && /^[0-9A-F]{64}$/.test(rect.data.corrective.hash));
+  expect('rectify_invoice issues an R1 that points at the paid invoice, with the engine totals', !rect.error && rect.data.type === 'R1' && rect.data.rectified === 'MCP-0001' && rect.data.corrective.number === 'MCP-0003' && rect.data.newTotal === '181.50' && rect.data.difference === '-36.30' && rect.data.refundDue === '36.30' && rect.data.outstanding === '0.00' && rect.data.alreadyPaid === '217.80' && rect.data.corrective.status === 'PAID' && /refund 36.30/.test(rect.data.note) && /^[0-9A-F]{64}$/.test(rect.data.corrective.hash));
   const rTwice = await tool('rectify_invoice', { number: 'MCP-0001', reason: 'again', lines: inv.lines });
   expect('a rectified invoice cannot be rectified again nor cancelled', rTwice.error && /already been rectified/.test(rTwice.text) && (await tool('cancel_invoice', { number: 'MCP-0001', reason: 'x' })).error);
   const l2 = await tool('list_invoices', { status: 'ALL' });

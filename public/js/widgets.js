@@ -3,7 +3,7 @@
 // The model only picks that specification. widgetData() reads the ledger and returns the dataset the chart, the table or
 // the figure shows, so every number in a widget is computed here, from the VeriFactu records and the engine's own
 // statuses, never by the model. Pure functions, no DOM: they run in the browser, on the server and under Node tests.
-import { addDays, cancelledNumbers, daysBetween, invoicesOf, isoFromDmy, quarterOfIso, quarterRange, rectifiedNumbers, stateOf } from './ledger.js';
+import { addDays, cancelledNumbers, daysBetween, invoicesOf, isoFromDmy, quarterOfIso, quarterRange, rectifiedNumbers, stateOf, collectedOf, outstandingOf } from './ledger.js';
 import { OPEN } from './status.js';
 import { csvCell, eur, esc } from './fmt.js';
 
@@ -87,8 +87,8 @@ const STATUS_GROUPS = [['paid', 'Paid'], ['open', 'Open'], ['overdue', 'Overdue'
 function weight(item, key) {
   const { r, state } = item;
   if (key === 'invoiced') return cents(r.total);
-  if (key === 'collected') return state === 'PAID' ? cents(r.total) : 0;
-  if (key === 'outstanding') return OPEN(state) ? cents(r.total) : 0;
+  if (key === 'collected') return cents(collectedOf(r, state));
+  if (key === 'outstanding') return cents(outstandingOf(r, state));
   if (key === 'vat') return cents(r.taxTotal);
   return 1; // count
 }
@@ -96,8 +96,7 @@ function weight(item, key) {
 function rateWeight(item, key, line) {
   const gross = cents(line.base) + cents(line.tax);
   if (key === 'invoiced') return gross;
-  if (key === 'collected') return item.state === 'PAID' ? gross : 0;
-  if (key === 'outstanding') return OPEN(item.state) ? gross : 0;
+  if (key === 'collected' || key === 'outstanding') { const total = cents(item.r.total); return total ? Math.round((gross * weight(item, key)) / total) : 0; }
   if (key === 'vat') return cents(line.tax);
   return 1;
 }

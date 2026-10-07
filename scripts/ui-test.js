@@ -9,7 +9,7 @@ import { proposalPaperHtml } from '../public/js/proposal.js';
 import { reduceActivity, activityRows, activityHtml, relTime, MAX_ACTIVITY, EVENTS } from '../public/js/activity.js';
 import { encodeRecord, decodeRecord, sanitizeRecord, shareable, shareUrl, fragmentValue, verifyRecord, ShareError, MAX_FRAGMENT } from '../public/js/share.js';
 import { renderDocument } from '../public/js/document.js';
-import { summary, vatReturn } from '../public/js/ledger.js';
+import { summary, vatReturn, stampRectificativa } from '../public/js/ledger.js';
 import { cleanSpec, defaultBoard, specKey, widgetData, widgetCsv, widgetTableHtml, periodRange, countText, subtitle, MAX_WIDGETS, TYPES, METRICS, GROUPS } from '../public/js/widgets.js';
 import { chartOptions, createChartHub, insightCardHtml, boardCardHtml, widgetBodyHtml, legendRows, legendHtml, mix as mixHex, palette, figures, chartLabel } from '../public/js/insights.js';
 import { eur, md } from '../public/js/fmt.js';
@@ -410,6 +410,21 @@ expect('the CSP gained no origin: fonts and styles still come only from Google F
   const said = synthReply([{ type: 'propose_rectify', args: { number: target.number, reason: 'x', lines: [{ description: 'A', qty: 1, price: 1000, vat: 21 }] } }], { records: sample, today: '2026-10-06' });
   expect('the sentence for a corrective invoice uses the engine totals (old and new)', said.includes(target.number) && said.includes(eur(target.total)) && said.includes(eur(1210)));
   expect('Activity knows the rectified event', EVENTS.rectified === 'Corrective invoice issued');
+  // Accounting of the R1 (judge B1): the same figure in the badge, the grid, the chain block, the document and the widgets
+  const s1 = stampRectificativa({ ...r1 }, target, '2026-10-06');
+  const recs1 = [...sample, s1];
+  const rows1 = ledgerRows(recs1, { today: '2026-10-06' });
+  const blk = chainBlocks(recs1, verdict).at(-1);
+  const kBefore = summary(sample, '2026-10-06'), kAfter = summary(recs1, '2026-10-06');
+  const widgetCollected = widgetData(recs1, { type: 'number', metric: 'collected', groupBy: 'none', period: 'all' }, '2026-10-06').value.toFixed(2);
+  const widgetOpen = widgetData(recs1, { type: 'number', metric: 'outstanding', groupBy: 'none', period: 'all' }, '2026-10-06').value.toFixed(2);
+  const refundText = 'Refund due 242,00';
+  expect('R1 accounting: a smaller corrected total is PAID, Collected does not move and nothing new is outstanding', rows1[0].status === 'PAID' && rows1[0].open === false && rows1[0].outstanding === 0 && kAfter.collected === kBefore.collected && kAfter.unpaidTotal === kBefore.unpaidTotal);
+  expect('R1 accounting: the grid row, the chain block and the document all say "Refund due 242,00 € · settle outside Cuadra"', clientCellHtml(rows1[0]).includes(refundText) && blk.tip.includes(refundText) && renderDocument(s1, { qr: () => '' }).includes(refundText) && renderDocument(s1, { qr: () => '' }).includes('Already paid on ' + target.number));
+  expect('R1 accounting: the widgets agree with the KPI cards', widgetCollected === kAfter.collected && widgetOpen === kAfter.unpaidTotal);
+  const bigger = stampRectificativa(await buildRectificativa({ issuer, target, number: 'SMP-0010', date: '2026-10-06', lines: [{ description: 'Brand strategy workshop', qty: 1, price: 2000, vat: 21 }], reason: 'More work', prev: sample.at(-1), generatedAt: '2026-10-06T10:00:00+02:00' }), target, '2026-10-06');
+  const recsB = [...sample, bigger], kB = summary(recsB, '2026-10-06');
+  expect('R1 accounting: a bigger corrected total adds only the difference as outstanding, with its own due date, in KPI and widget', kB.collected === kBefore.collected && Number(kB.unpaidTotal) === Number(kBefore.unpaidTotal) + 968 && ledgerRows(recsB, { today: '2026-10-06' })[0].outstanding === 968 && widgetData(recsB, { type: 'number', metric: 'outstanding', groupBy: 'none', period: 'all' }, '2026-10-06').value.toFixed(2) === kB.unpaidTotal && bigger.dueDate === '2026-10-21' && renderDocument(bigger, { qr: () => '' }).includes('Pendiente / Outstanding'));
 }
 
 // Gestoría mode (B6): the storage namespace, the index of companies, the second sample company and the numbers of the overview

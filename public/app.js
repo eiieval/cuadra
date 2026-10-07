@@ -1,7 +1,7 @@
 import { buildAlta, buildAnulacion, buildRectificativa, verifyChain, recordXml, money, validNif, totals, isAnulacion } from './js/verifactu.js';
 import {
   stateOf, summary, vatReturn, returnQuarter, previousQuarter, clients, cancelledNumbers, rectifiedNumbers, invoicesOf, findInvoice,
-  nextNumber, buildSample, addDays, daysBetween, isoFromDmy, quarterOfIso,
+  nextNumber, buildSample, stampRectificativa, settlementOf, refundNote, addDays, daysBetween, isoFromDmy, quarterOfIso,
 } from './js/ledger.js';
 
 import { esc, eur, fmtDate, isoToday, md, safeUrl } from './js/fmt.js';
@@ -282,17 +282,18 @@ async function rectify(rec, args) {
   const { lines, reason } = normalizeRectify(args);
   const number = nextNumber(state.records, state.company.series);
   const record = await buildRectificativa({ issuer: state.company, target: rec, number, date: today(), lines, reason: reason || 'Correction', prev: state.records.at(-1) });
-  Object.assign(record, { email: rec.email, paidAt: rec.paidAt || today() });
+  stampRectificativa(record, rec, today());
   state.records.push(record);
   chainFx = { newFrom: state.records.length - 1 };
   flash = { number, at: Date.now() };
   const diff = Number(money(Number(record.total) - Number(rec.total)));
+  const set = settlementOf(record);
   log('system', 'rectified', number, `R1 rectifies ${rec.number} · hash ${record.hash.slice(0, 6)}…`);
   save();
   closeSheet();
   $('#chainStrip').scrollIntoView({ behavior: reducedMotion() ? 'auto' : 'smooth', block: 'nearest' });
   toast([bit(number, 'num font-semibold'), ' issued, rectifies ', bit(rec.number), ` · hash `, bit(`${record.hash.slice(0, 6)}…`)]);
-  return { ok: true, number, text: `Issued ${number}, a corrective invoice (R1) that rectifies ${rec.number}${diff ? `; the difference is ${eur(diff)}, settle it with the client outside Cuadra` : ''}. ${rec.number} stays in the chain untouched.` };
+  return { ok: true, number, text: `Issued ${number}, a corrective invoice (R1) that rectifies ${rec.number}${set?.refund ? `; refund due ${eur(set.refund)}, settle it with the client outside Cuadra` : set?.due ? `; ${eur(set.due)} more is now outstanding and Collected does not change` : ''}. ${rec.number} stays in the chain untouched.` };
 }
 
 // One line about a proposal, for the activity log.
@@ -623,7 +624,7 @@ function renderInvoices() {
     const refresh = r.paypal?.id ? `<button class="btn-ghost !min-h-8" data-i="${i}" data-do="refresh" title="Refresh PayPal status" aria-label="Refresh PayPal status">↻</button>` : '';
     return `<tr class="row${st === 'CANCELLED' || st === 'RECTIFIED' ? ' text-soft' : ''}${mark}">
       <td class="c-num num whitespace-nowrap text-xs ${st === 'CANCELLED' || st === 'RECTIFIED' ? 'line-through' : ''}" title="${esc(r.hash)}">${esc(r.number)}<span class="c-hash text-soft">${esc(r.hash.slice(0, 6))}</span></td>
-      <td class="c-client">${esc(r.recipient?.name)}${r.rectifies ? ` <span class="text-[11px] text-soft num">R1 · rectifies ${esc(r.rectifies.number)}</span>` : ''}${r.sample ? ' <span class="text-[11px] text-soft">sample</span>' : ''}</td>
+      <td class="c-client">${esc(r.recipient?.name)}${r.rectifies ? ` <span class="text-[11px] text-soft num">R1 · rectifies ${esc(r.rectifies.number)}</span>` : ''}${refundNote(r) ? ` <span class="text-[11px] text-soft">${esc(refundNote(r))}</span>` : ''}${r.sample ? ' <span class="text-[11px] text-soft">sample</span>' : ''}</td>
       <td class="c-total num whitespace-nowrap text-right">${eur(r.total)}</td>
       <td class="c-status"><span class="${BADGE[st] || 'badge'}" title="${esc(r.paypal?.error || (r.paypal?.id ? 'On PayPal' : ''))}">${esc(statusWord(st))}</span>${r.paypal?.id ? ' <span class="text-[11px] text-link">PayPal</span>' : ''}${altered}</td>
       <td class="c-due hidden whitespace-nowrap text-xs text-soft xl:table-cell">${r.dueDate && OPEN(st) ? esc(fmtDate(r.dueDate)) : ''}</td>
@@ -857,7 +858,7 @@ function openDetail(r) {
   const st = anul ? '' : status(r);
   const xmlBlock = `<details><summary class="cursor-pointer text-fg/80">${anul ? 'RegistroAnulacion' : 'RegistroAlta'} XML</summary><pre class="num mt-2 max-h-56 overflow-auto whitespace-pre-wrap break-all rounded bg-ink p-2 text-[11px]">${esc(recordXml(r))}</pre></details>`;
   const actionsHtml = `<div class="flex flex-wrap gap-2"><button class="btn-ghost" data-dl="link">Copy verification link</button><button class="btn-ghost" data-dl="print">Open printable</button><button class="btn-ghost" data-dl="xml">Download XML</button><button class="btn-primary" data-dl="close">Close</button></div>`;
-  const pay = r.paypal?.id ? `${esc(r.paypal.status)}${safeUrl(r.paypal.payerUrl) ? ` · <a class="link" href="${esc(r.paypal.payerUrl)}" target="_blank" rel="noopener noreferrer">payer page</a>` : ''}` : r.rectifies ? `Settled against ${esc(r.rectifies.number)}` : r.paidAt ? `Paid by ${esc(METHOD[r.paidMethod] || 'transfer')} on ${esc(fmtDate(r.paidAt))}` : 'Not on PayPal';
+  const pay = r.paypal?.id ? `${esc(r.paypal.status)}${safeUrl(r.paypal.payerUrl) ? ` · <a class="link" href="${esc(r.paypal.payerUrl)}" target="_blank" rel="noopener noreferrer">payer page</a>` : ''}` : r.rectifies ? (settlementOf(r) ? `Paid ${esc(eur(settlementOf(r).paid))} on ${esc(settlementOf(r).against)}` + (settlementOf(r).refund ? `<br><b>${esc(refundNote(r))}</b>` : settlementOf(r).due ? `<br>Outstanding ${esc(eur(settlementOf(r).due))}` : '') : `Settled against ${esc(r.rectifies.number)}`) : r.paidAt ? `Paid by ${esc(METHOD[r.paidMethod] || 'transfer')} on ${esc(fmtDate(r.paidAt))}` : 'Not on PayPal';
   const manage = !anul && OPEN(st) ? `<div class="space-y-2 rounded-lg border border-line p-2"><div class="text-soft">Manage</div>
       <div class="flex flex-wrap gap-2"><select id="payMethod" class="field !w-auto !py-1 text-xs" aria-label="Payment method"><option value="BANK_TRANSFER">Bank transfer</option><option value="CASH">Cash</option><option value="OTHER">Other</option></select><button class="btn-ghost" data-dl="paid">Mark paid</button></div>
       <div class="flex flex-wrap gap-2"><input id="cancelReason" class="field !w-auto flex-1 !py-1 text-xs" maxlength="200" placeholder="Reason, e.g. duplicate" aria-label="Cancellation reason"><button class="btn-ghost btn-danger" data-dl="cancel">Cancel invoice</button></div></div>` : '';
