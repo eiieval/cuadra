@@ -146,7 +146,7 @@ async function call(handler, { method = 'POST', headers = {}, body = {} } = {}) 
   let out = '';
   let status = 200;
   const res = { writeHead(s) { status = s; }, setHeader() {}, write(c) { out += c; }, end(c) { if (c) out += c; } };
-  await handler({ method, headers: { 'content-type': 'application/json', host: 'localhost', 'x-forwarded-for': '1.1.1.1', ...headers }, body }, res);
+  await handler({ method, headers: { 'content-type': 'application/json', host: 'localhost', 'x-forwarded-for': '1.1.1.1', 'sec-fetch-site': 'same-origin', ...headers }, body }, res);
   let json = null;
   try { json = JSON.parse(out); } catch { /* not JSON */ }
   return { status, json };
@@ -221,6 +221,53 @@ expect('history keeps user/assistant turns only, merged and alternating from the
 let last = 0;
 for (let i = 0; i < 21; i++) last = (await call(agent, { headers: { 'x-forwarded-for': '9.9.9.9' }, body: {} })).status;
 expect('per-IP rate limit kicks in (429)', last === 429);
+// Abuse of the PayPal operations (judge S1, S2): no accounts in the demo, so the server bounds what anyone can do.
+{
+  const { cleanInvoice, verificationNote } = await import('../lib/validate.js');
+  const { clientIp, resetGuard } = await import('../lib/guard.js');
+  const qr = qrUrl({ nif: 'B76543214', number: good.number, date: '04-10-2026', total: '217.80' });
+  const withQr = { ...good, qr };
+  const cleaned = cleanInvoice({ ...withQr, note: 'Pay now to evil.example' });
+  expect("the PayPal note is built by the server from the record's QR URL: a fixed sentence and the AEAT link, whatever note the client sends", cleaned.problems.length === 0 && cleaned.invoice.note === `VERI*FACTU invoice. Verify it at the Spanish Tax Agency: ${qr}` && !cleaned.invoice.note.includes('evil') && cleanInvoice({ ...good, note: 'Pay now to evil.example' }).invoice.note === 'VERI*FACTU invoice.');
+  expect("a verification link that is not this invoice's (another host, another amount, extra parameters, a bad NIF) is rejected", ['https://evil.example/wlpl/TIKE-CONT/ValidarQR?nif=B76543214&numserie=CUTEST-0001&fecha=04-10-2026&importe=217.80', qr.replace('217.80', '1.00'), `${qr}&x=Pay+evil.example`, qr.replace('B76543214', 'B76543215'), 'javascript:alert(1)', 'nope'].every((q) => cleanInvoice({ ...good, qr: q }).problems.some((p) => /verification link/.test(p)) && verificationNote(q, good.number, '2026-10-04', '217.80') === null));
+  const viaApi = await call(paypal, { headers: { 'x-forwarded-for': '10.0.0.1' }, body: { op: 'create_and_send', invoice: { ...withQr, note: 'Pay now to evil.example' } } });
+  expect('through the API a free note from the client changes nothing and a forged link is a 400', viaApi.status === 200 && (await call(paypal, { headers: { 'x-forwarded-for': '10.0.0.1' }, body: { op: 'create_and_send', invoice: { ...good, qr: 'https://evil.example/' } } })).status === 400);
+
+  const mutate = (headers) => call(paypal, { headers: { 'x-forwarded-for': '10.0.0.2', ...headers }, body: { op: 'create_and_send', invoice: good } });
+  expect('mutating operations need a same-origin browser: curl (no Sec-Fetch-Site) and cross-site are 403', (await mutate({ 'sec-fetch-site': '' })).status === 403 && (await mutate({ 'sec-fetch-site': 'cross-site' })).status === 403 && (await mutate({ 'sec-fetch-site': 'same-site' })).status === 403);
+  expect('same-origin and "none" (typed address) pass; an Origin that is not this host is 403 even then', (await mutate({ 'sec-fetch-site': 'same-origin' })).status === 200 && (await mutate({ 'sec-fetch-site': 'none' })).status === 200 && (await mutate({ origin: 'http://localhost' })).status === 200 && (await mutate({ origin: 'https://evil.example' })).status === 403);
+  const opNoSite = async (op, extra) => (await call(paypal, { headers: { 'x-forwarded-for': '10.0.0.3', 'sec-fetch-site': '' }, body: { op, id: created.json.id, token: created.json.token, ...extra } })).status;
+  expect('remind, cancel, record_payment and subscribe are blocked the same way, while token-bound reads are not', (await Promise.all([opNoSite('remind'), opNoSite('cancel'), opNoSite('record_payment', { amount: 5 }), opNoSite('subscribe', { plan: 'pro' })])).every((s) => s === 403) && (await opNoSite('status')) === 200);
+
+  const xff = (value, extra = {}) => call(agent, { headers: { 'x-forwarded-for': value, ...extra }, body: {} });
+  const hostile = async (n, extra) => { let s = 0; for (let i = 0; i < n; i++) s = (await xff(`1.2.3.${i}, 6.6.6.6`, extra)).status; return s; };
+  expect("a spoofed X-Forwarded-For no longer bypasses the limit: the last hop (the proxy's) counts, not the first", await hostile(25) === 429 && clientIp({ headers: { 'x-forwarded-for': '1.1.1.1, 2.2.2.2, 3.3.3.3' } }) === '3.3.3.3' && clientIp({ headers: { 'x-forwarded-for': '9.9.9.9' } }) === '9.9.9.9' && clientIp({ headers: {}, socket: { remoteAddress: '::1' } }) === '::1');
+  resetGuard();
+  process.env.VERCEL = '1';
+  const vercel = async (real, spoof) => (await xff(spoof, { 'x-real-ip': real })).status;
+  let vs = 0;
+  for (let i = 0; i < 25; i++) vs = await vercel('8.8.4.4', `5.5.5.${i}`);
+  expect('on Vercel the platform header wins: spoofed X-Forwarded-For is ignored, another real address has its own budget', vs === 429 && (await vercel('8.8.4.5', '5.5.5.1')) === 400 && clientIp({ headers: { 'x-vercel-forwarded-for': '4.4.4.4', 'x-forwarded-for': '1.1.1.1' } }) === '4.4.4.4' && clientIp({ headers: { 'x-real-ip': '7.7.7.7', 'x-forwarded-for': '1.1.1.1' } }) === '7.7.7.7');
+  delete process.env.VERCEL;
+  resetGuard();
+
+  const send = (ip, number) => call(paypal, { headers: { 'x-forwarded-for': ip }, body: { op: 'create_and_send', invoice: { ...good, number } } });
+  const sends = [];
+  for (let i = 0; i < 11; i++) sends.push(await send('10.0.1.1', `CUCAP-${1000 + i}`));
+  expect('create_and_send: 10 per IP per hour, the 11th is a clear 429 (another IP is unaffected)', sends.slice(0, 10).every((s) => s.status === 200) && sends[10].status === 429 && /Sending limit reached: 10 invoices per hour/.test(sends[10].json.error) && (await send('10.0.1.2', 'CUCAP-3000')).status === 200);
+  resetGuard();
+  let capped = null;
+  let okSends = 0;
+  for (let i = 0; i < 301; i++) { const r = await send(`10.1.${Math.floor(i / 250)}.${i % 250}`, `CUDAY-${i}`); if (r.status === 200) okSends++; else capped = r; }
+  expect('create_and_send: a global cap of 300 per day per instance, then a generic "daily limit" message', okSends === 300 && capped?.status === 429 && /daily limit/.test(capped.json.error) && !/token|secret|key/i.test(capped.json.error));
+  resetGuard();
+  let agentCapped = null;
+  let agentOk = 0;
+  for (let i = 0; i < 2001; i++) { const r = await call(agent, { headers: { 'x-forwarded-for': `10.2.${Math.floor(i / 250)}.${i % 250}` }, body: { message: 'hi', context: {} } }); if (r.status === 200) agentOk++; else agentCapped = r; }
+  expect('agent: 20 per IP per 10 minutes as before plus a global 2,000 per day, then the same daily message', agentOk === 2000 && agentCapped?.status === 429 && /daily limit/.test(agentCapped.json.error));
+  resetGuard();
+}
+
 // PayPal webhooks (B7, demo-grade): the signature is verified by PayPal (mock: one known test signature), events are
 // deduplicated by event_id, kept in memory (last 200) and read back per invoice, bound to the session by the HMAC token.
 {

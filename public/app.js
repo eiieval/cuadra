@@ -152,7 +152,7 @@ const paypalPayload = (rec, dueDays) => ({
   number: rec.number, date: isoFromDmy(rec.date), dueDays, issuerName: rec.issuerName,
   recipient: { name: rec.recipient?.name, nif: rec.recipient?.nif, email: rec.email || '' },
   lines: rec.lines, description: rec.description,
-  note: `VERI*FACTU invoice. Verify it at the Spanish Tax Agency: ${rec.qr}`,
+  qr: rec.qr, // the server writes the PayPal note itself from this link
 });
 
 async function collect(rec) {

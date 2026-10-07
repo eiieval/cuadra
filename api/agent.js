@@ -26,7 +26,7 @@ export function shapeHistory(raw) {
 // POST { message, context, history } -> { reply, actions }. Actions are proposals; the user confirms them in the UI.
 // Everything the browser sends is re-shaped here: only known fields, bounded sizes, no control characters.
 export default async function handler(req, res) {
-  const g = await guard(req, res, { name: 'agent', perIp: 20 });
+  const g = await guard(req, res, { name: 'agent', perIp: 20, dailyCap: 2000 });
   if (!g) return;
   const message = clean(g.body.message, 500);
   if (!message) return json(res, 400, { error: 'message is required' });

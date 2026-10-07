@@ -1,7 +1,7 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { createAndSend, status, remind, cancel, recordPayment, subscribe, subscription, PLANS } from '../lib/paypal.js';
 import { cleanInvoice } from '../lib/validate.js';
-import { guard, json, clean } from '../lib/guard.js';
+import { guard, json, clean, allow, underDailyCap, sameSiteBrowser, CAP_MESSAGE } from '../lib/guard.js';
 import { eventsFor } from '../lib/events.js';
 import { publicMessage } from '../lib/errors.js';
 
@@ -17,6 +17,10 @@ const owns = (id, token) => {
 
 const METHODS = ['BANK_TRANSFER', 'CASH', 'OTHER'];
 const INVOICE_OPS = ['status', 'remind', 'cancel', 'record_payment'];
+// Everything that writes to PayPal. Reads (status, events, subscription) are bound to their HMAC token instead.
+const MUTATING = ['create_and_send', 'remind', 'cancel', 'record_payment', 'subscribe'];
+const SEND_PER_IP = 10; // invoices sent per IP per hour
+const SEND_PER_DAY = 300; // invoices sent per day by this instance, all visitors
 
 // Absolute base URL for PayPal's return links: PUBLIC_URL if set, else the request's own host.
 function baseUrl(req) {
@@ -32,10 +36,13 @@ export default async function handler(req, res) {
   const g = await guard(req, res, { name: 'paypal', perIp: 30 });
   if (!g) return;
   const { op } = g.body;
+  if (MUTATING.includes(op) && !sameSiteBrowser(req)) return json(res, 403, { error: 'This action is only available from the Cuadra page' });
   try {
     if (op === 'create_and_send') {
       const { problems, invoice } = cleanInvoice(g.body.invoice);
       if (problems.length) return json(res, 400, { error: `Invalid invoice: ${problems.join('; ')}` });
+      if (!allow(`send|${g.ip}`, SEND_PER_IP, 60 * 60 * 1000)) return json(res, 429, { error: `Sending limit reached: ${SEND_PER_IP} invoices per hour in this demo. Try again later.` }, { 'retry-after': '3600' });
+      if (!underDailyCap('send', SEND_PER_DAY)) return json(res, 429, { error: CAP_MESSAGE }, { 'retry-after': '3600' });
       const out = await createAndSend(invoice);
       return json(res, 200, { ...out, token: sign(out.id) });
     }
