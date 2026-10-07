@@ -9,6 +9,7 @@ import { chainBlocks, chainStatus, chainTrackHtml, statusHtml } from './js/chain
 import { engineChecks, checksHtml, blockers, boundsProblems } from './js/checks.js';
 import { normalizeProposal as normalize, normalizeRectify, proposalPaperHtml, proposalActionsHtml } from './js/proposal.js';
 import { detectLang, synthReply } from './js/say.js';
+import { planButton, plansConfigured } from './js/plans.js';
 import { isPlan, planProgress, planSummary, pendingLowRisk, hasHighRisk } from './js/plan.js';
 import { reduceActivity, activityRows, activityHtml } from './js/activity.js';
 import { renderDocument } from './js/document.js';
@@ -702,11 +703,14 @@ function renderPlan() {
   const active = s?.status === 'ACTIVE';
   $('#plan').textContent = manyCompanies() ? 'Gestoría plan (demo)' : active ? `${s.plan === 'team' ? 'Gestoría' : 'Autónomo'} plan` : 'Free plan';
   document.querySelectorAll('[data-plan]').forEach((b) => {
-    const mine = active && b.dataset.plan === s.plan;
-    b.disabled = mine;
-    b.textContent = mine ? 'Current plan' : b.dataset.label;
+    const view = planButton({ label: b.dataset.label, mine: active && b.dataset.plan === s.plan, configured: plansOn });
+    b.disabled = view.disabled;
+    b.textContent = view.text;
   });
 }
+// Does this deployment have PayPal plans? Unknown until /api/health answers (then the buttons work as before).
+let plansOn = true;
+fetch('/api/health').then((r) => r.json()).then((h) => { plansOn = plansConfigured(h); renderPlan(); }).catch(() => {});
 
 // ---------- Insights: the board between the KPIs and the ledger, and the charts of the Insight cards ----------
 
@@ -1425,6 +1429,7 @@ $('#msg').addEventListener('focus', () => tour?.stop());
 
 // Pricing: Cuadra's own plans are PayPal Subscriptions, created server-side and approved on PayPal.
 document.querySelectorAll('[data-plan]').forEach((b) => b.addEventListener('click', async () => {
+  if (!plansOn) return;
   b.disabled = true;
   b.textContent = 'Opening PayPal…';
   const r = await post('/api/paypal', { op: 'subscribe', plan: b.dataset.plan });

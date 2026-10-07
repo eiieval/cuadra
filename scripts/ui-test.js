@@ -458,6 +458,26 @@ expect('the CSP gained no origin: fonts and styles still come only from Google F
   expect('README: each PayPal invoice carries an HMAC token issued to the browser that created it, and nothing is "bound to the session"', readme.includes('each PayPal invoice carries an HMAC token issued to the browser that created it; only that token can read, remind or cancel it'.replace('each', 'Each')) && !/bound to the (browser )?session|HMAC-bound to the session/i.test(readme + arch));
 }
 
+// Subscribe buttons (judge B2): honest when the deployment has no PayPal plans, unchanged when it has
+{
+  const { planButton, plansConfigured, NOT_CONFIGURED } = await import('../public/js/plans.js');
+  expect('plans: /api/health subscriptions:false renders the plan buttons disabled with "Plans not configured on this deployment"', plansConfigured({ subscriptions: false }) === false && JSON.stringify(planButton({ label: 'Subscribe with PayPal', configured: false })) === JSON.stringify({ text: 'Plans not configured on this deployment', disabled: true }) && NOT_CONFIGURED === 'Plans not configured on this deployment');
+  expect('plans: when configured (or health unknown) the button is enabled and says what it always said; the current plan stays disabled', plansConfigured({ subscriptions: true }) && plansConfigured(null) && plansConfigured({}) && JSON.stringify(planButton({ label: 'Subscribe with PayPal', configured: true })) === JSON.stringify({ text: 'Subscribe with PayPal', disabled: false }) && planButton({ label: 'x', mine: true, configured: false }).text === 'Current plan');
+  const appJs = read('public/app.js');
+  expect('plans: the page reads /api/health on load and a click on a disabled plan does nothing (no 502 toast)', /fetch\('\/api\/health'\)/.test(appJs) && /if \(!plansOn\) return;/.test(appJs));
+  const saved = { ...process.env };
+  for (const k of ['MOCK', 'PAYPAL_PLAN_PRO', 'PAYPAL_PLAN_TEAM']) delete process.env[k];
+  const { default: health } = await import('../api/health.js');
+  let body = '';
+  health({ method: 'GET', headers: {} }, { writeHead() {}, end(c) { body = c; } });
+  expect('plans: /api/health reports subscriptions:false without the plan ids, and true with them (never their values)', JSON.parse(body).subscriptions === false);
+  process.env.PAYPAL_PLAN_PRO = 'P-x'; process.env.PAYPAL_PLAN_TEAM = 'P-y';
+  health({ method: 'GET', headers: {} }, { writeHead() {}, end(c) { body = c; } });
+  expect('plans: with PAYPAL_PLAN_PRO and PAYPAL_PLAN_TEAM set it is true and the response carries no ids', JSON.parse(body).subscriptions === true && !body.includes('P-x'));
+  for (const k of ['PAYPAL_PLAN_PRO', 'PAYPAL_PLAN_TEAM']) delete process.env[k];
+  Object.assign(process.env, saved);
+}
+
 // Gestoría mode (B6): the storage namespace, the index of companies, the second sample company and the numbers of the overview
 {
   const primary = { nif: 'B76543214', name: 'Estudio Norte SL' };
