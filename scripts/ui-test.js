@@ -11,6 +11,7 @@ import { cleanInvoice } from '../lib/validate.js';
 import { reduceActivity, activityRows, activityHtml, relTime, MAX_ACTIVITY, EVENTS } from '../public/js/activity.js';
 import { encodeRecord, decodeRecord, sanitizeRecord, shareable, shareUrl, fragmentValue, verifyRecord, ShareError, MAX_FRAGMENT } from '../public/js/share.js';
 import { renderDocument } from '../public/js/document.js';
+import { verdictHtml, CONSISTENT, NOT_THE_ISSUER } from '../public/js/verdict.js';
 import { summary, vatReturn, stampRectificativa } from '../public/js/ledger.js';
 import { cleanSpec, defaultBoard, specKey, widgetData, widgetCsv, widgetTableHtml, periodRange, countText, subtitle, MAX_WIDGETS, TYPES, METRICS, GROUPS } from '../public/js/widgets.js';
 import { chartOptions, createChartHub, insightCardHtml, boardCardHtml, widgetBodyHtml, legendRows, legendHtml, mix as mixHex, palette, figures, chartLabel } from '../public/js/insights.js';
@@ -186,6 +187,12 @@ const verifyPage = read('public/verify.html');
 const verifyJs = read('public/verify.js');
 expect('verify page: never calls a server (no fetch, XHR, beacon or form)', !/fetch\(|XMLHttpRequest|sendBeacon|WebSocket|<form/.test(verifyJs + verifyPage + read('public/js/share.js') + read('public/js/document.js')));
 expect('verify page: print rules show only the document', /@media print[\s\S]*\.print-doc main > :not\(#paper\)\s*\{\s*display: none !important/.test(css) && verifyPage.includes('class="print-doc') && verifyPage.includes('id="paper"') && (verifyPage.match(/no-print/g) || []).length >= 4);
+{
+  const good = verdictHtml({ ok: true, hash: 'ABCDEF0123456789' }), bad = verdictHtml({ ok: false, reason: 'the content does not match its hash' });
+  expect('verify page (judge S3): a matching hash says "Consistent copy: the content matches its hash" and, right next to it, that it does not prove who issued it', good.state === 'ok' && good.html.includes('Consistent copy: the content matches its hash') && good.html.includes('This proves this copy was not altered, not who issued it. Scan the AEAT QR to check the issuer.') && good.html.includes('ABCDEF01…') && !/This document matches/.test(good.html) && CONSISTENT.startsWith('Consistent copy') && NOT_THE_ISSUER.includes('AEAT QR'));
+  expect('verify page: an altered record is unchanged ("Altered: ...") and carries no consistency claim', bad.state === 'bad' && bad.html.includes('Altered: the content does not match its hash') && !bad.html.includes('Consistent') && !bad.html.includes('not who issued it'));
+  expect('verify page: the verdict is escaped', !verdictHtml({ ok: false, reason: '<img src=x onerror=1>' }).html.includes('<img'));
+}
 expect('verify page: honest text and the Print button', verifyPage.includes("Generated from the issuer's ledger copy. For legal effect, scan the AEAT QR.") && verifyPage.includes('Print / Save as PDF') && /window\.print\(\)/.test(verifyJs));
 
 // 6. Social and brand (A9): the card, the icons and the metas that point to them

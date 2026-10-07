@@ -4,6 +4,7 @@ import { decodeRecord, fragmentValue, ShareError, verifyRecord } from './js/shar
 import { renderDocument } from './js/document.js';
 import { qrSvg } from './js/qr.js';
 import { esc } from './js/fmt.js';
+import { verdictHtml } from './js/verdict.js';
 
 const $ = (s) => document.querySelector(s);
 const MESSAGES = {
@@ -37,8 +38,8 @@ async function show() {
   paper.hidden = false;
   $('#print').disabled = false;
   document.title = `${rec.kind === 'anulacion' ? 'Cancellation' : 'Invoice'} ${rec.number} · Cuadra verification`;
-  if (v.ok) verdict('ok', `<span class="verdict-mark" aria-hidden="true">✓</span> This document matches its hash <span class="num">${esc(v.hash.slice(0, 8))}…</span>`);
-  else verdict('bad', `<span class="verdict-mark" aria-hidden="true">✗</span> Altered: ${esc(v.reason)}`);
+  const out = verdictHtml(v);
+  verdict(out.state, out.html);
 }
 
 $('#print').addEventListener('click', () => window.print());

@@ -241,7 +241,7 @@ try {
     await good.waitForLoadState('networkidle');
     await settle(good, 900);
     const verdict = await good.locator('#verdict').innerText();
-    check(`[${view.name}] verify.html shows ✓ This document matches its hash, with both QR codes for an invoice sent with PayPal`, /✓/.test(verdict) && /This document matches its hash/.test(verdict) && (await good.locator('.doc-qr').count()) === 2 && /Pay with PayPal/.test(await good.locator('.doc-foot').innerText()));
+    check(`[${view.name}] verify.html shows ✓ Consistent copy: the content matches its hash, with both QR codes for an invoice sent with PayPal`, /✓/.test(verdict) && /Consistent copy: the content matches its hash/.test(verdict) && (await good.locator('.doc-qr').count()) === 2 && /Pay with PayPal/.test(await good.locator('.doc-foot').innerText()));
     await good.screenshot({ path: `${OUT}/05-verify-${view.name}.png`, fullPage: true });
     check(`[${view.name}] verify.html has no horizontal scroll and never loaded a server resource besides its own files`, (await overflow(good)) <= 0);
     await good.emulateMedia({ media: 'print' });
@@ -701,7 +701,7 @@ try {
     watch(ver, `${view.name} verify R1`);
     await ver.waitForLoadState('networkidle');
     await settle(ver, 900);
-    check(`[${view.name}] rectify: verify.html shows the corrective invoice with the reference and "This document matches its hash"`, /This document matches its hash/.test(await ver.locator('#verdict').innerText()) && /Corrective invoice/i.test(await ver.locator('#paper').innerText()) && (await ver.locator('#paper').innerText()).includes(target));
+    check(`[${view.name}] rectify: verify.html shows the corrective invoice with the reference and "Consistent copy: the content matches its hash"`, /Consistent copy: the content matches its hash/.test(await ver.locator('#verdict').innerText()) && /Corrective invoice/i.test(await ver.locator('#paper').innerText()) && (await ver.locator('#paper').innerText()).includes(target));
     await ver.screenshot({ path: `${OUT}/14e-verify-r1-${view.name}.png`, fullPage: true });
     await ver.close();
     await page.keyboard.press('Escape');

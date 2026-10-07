@@ -886,7 +886,7 @@ function openDetail(r) {
     const el = body.querySelector('#dlgVerdict');
     if (!el) return;
     el.dataset.state = v.ok ? 'ok' : 'bad';
-    el.innerHTML = v.ok ? `<span class="verdict-mark" aria-hidden="true">✓</span> Matches its hash <span class="num">${esc(v.hash.slice(0, 8))}…</span>` : `<span class="verdict-mark" aria-hidden="true">✗</span> Altered: ${esc(v.reason)}`;
+    el.innerHTML = v.ok ? `<span class="verdict-mark" aria-hidden="true">✓</span> Consistent copy: matches its hash <span class="num">${esc(v.hash.slice(0, 8))}…</span>` : `<span class="verdict-mark" aria-hidden="true">✗</span> Altered: ${esc(v.reason)}`;
     if (!v.ok) body.querySelector('.doc')?.insertAdjacentHTML('afterbegin', '<div class="doc-stamp" aria-hidden="true">Altered</div>');
   }).catch(() => {
     const el = body.querySelector('#dlgVerdict');
