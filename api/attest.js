@@ -1,5 +1,6 @@
 // Signed attestation of an issued record.
-//   GET  /api/attest  -> { enabled, algorithm, publicKey, keyId, mode }   (404 when this deployment has no key)
+//   GET  /api/attest  -> { enabled, algorithm, publicKey, keyId, mode }   ({ enabled: false } with 200 when this deployment has no key,
+//                        so a page load never logs an error in the browser console)
 //   POST /api/attest  { nif, number, date, type, taxTotal, total, prevHash, generatedAt, hash } -> { signature, keyId, signedAt }
 // The server recomputes the VeriFactu hash from the fields and signs it only if it matches, and only for a record that was
 // generated moments ago: a backdated or invented hash is refused. It vouches that this deployment saw that hash at that
@@ -17,7 +18,7 @@ const STAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2
 export default async function handler(req, res) {
   const key = attestKey();
   if (req.method === 'GET') {
-    if (!key) return json(res, 404, { enabled: false });
+    if (!key) return json(res, 200, { enabled: false }, { 'cache-control': 'public, max-age=60' });
     return json(res, 200, { enabled: true, algorithm: 'Ed25519', publicKey: key.publicKey, keyId: key.keyId, mode: key.mode }, { 'cache-control': 'public, max-age=300' });
   }
   if (!key) return json(res, 404, { enabled: false });

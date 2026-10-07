@@ -51,7 +51,7 @@ export async function checkAttestation(rec, key) {
 }
 
 let keyPromise = null;
-// GET /api/attest once per page. null when the deployment has no key (404), is unreachable, or answers nonsense.
+// GET /api/attest once per page. null when the deployment has no key ({ enabled: false }), is unreachable, or answers nonsense.
 export function fetchAttestKey(fetchFn = globalThis.fetch?.bind(globalThis)) {
   keyPromise ||= (async () => {
     try {
