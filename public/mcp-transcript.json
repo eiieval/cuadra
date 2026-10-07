@@ -660,7 +660,7 @@
        "content": [
         {
          "type": "text",
-         "text": "{\n  \"issued\": {\n    \"number\": \"CU2026-0001\",\n    \"date\": \"2026-10-07\",\n    \"client\": \"Acme Studio SL\",\n    \"nif\": \"B12345674\",\n    \"base\": \"180.00\",\n    \"vat\": \"37.80\",\n    \"total\": \"217.80\",\n    \"status\": \"SENT\",\n    \"due\": \"2026-10-22\",\n    \"paypal\": {\n      \"id\": \"INV2-MOCK-0001\",\n      \"status\": \"SENT\",\n      \"payerUrl\": \"https://www.sandbox.paypal.com/invoice/p/#INV2-MOCK-0001\"\n    },\n    \"hash\": \"F474F5A98CA58E94A9AE2A058D0B9277D649E1C66655A1441FA1C72B2F8B55D6\",\n    \"verifyUrl\": \"https://prewww2.aeat.es/wlpl/TIKE-CONT/ValidarQR?nif=B76543214&numserie=CU2026-0001&fecha=07-10-2026&importe=217.80\"\n  },\n  \"paypalError\": null\n}"
+         "text": "{\n  \"issued\": {\n    \"number\": \"CU2026-0001\",\n    \"date\": \"2026-10-07\",\n    \"client\": \"Acme Studio SL\",\n    \"nif\": \"B12345674\",\n    \"base\": \"180.00\",\n    \"vat\": \"37.80\",\n    \"total\": \"217.80\",\n    \"status\": \"SENT\",\n    \"outstanding\": \"217.80\",\n    \"due\": \"2026-10-22\",\n    \"paypal\": {\n      \"id\": \"INV2-MOCK-0001\",\n      \"status\": \"SENT\",\n      \"payerUrl\": \"https://www.sandbox.paypal.com/invoice/p/#INV2-MOCK-0001\"\n    },\n    \"hash\": \"98E98148C92396F7AB935A631D23B604E7D780ABCDF05500AA62CDDB6B5CA245\",\n    \"verifyUrl\": \"https://prewww2.aeat.es/wlpl/TIKE-CONT/ValidarQR?nif=B76543214&numserie=CU2026-0001&fecha=07-10-2026&importe=217.80\"\n  },\n  \"paypalError\": null\n}"
         }
        ],
        "structuredContent": {
@@ -673,13 +673,14 @@
          "vat": "37.80",
          "total": "217.80",
          "status": "SENT",
+         "outstanding": "217.80",
          "due": "2026-10-22",
          "paypal": {
           "id": "INV2-MOCK-0001",
           "status": "SENT",
           "payerUrl": "https://www.sandbox.paypal.com/invoice/p/#INV2-MOCK-0001"
          },
-         "hash": "F474F5A98CA58E94A9AE2A058D0B9277D649E1C66655A1441FA1C72B2F8B55D6",
+         "hash": "98E98148C92396F7AB935A631D23B604E7D780ABCDF05500AA62CDDB6B5CA245",
          "verifyUrl": "https://prewww2.aeat.es/wlpl/TIKE-CONT/ValidarQR?nif=B76543214&numserie=CU2026-0001&fecha=07-10-2026&importe=217.80"
         },
         "paypalError": null
@@ -716,7 +717,7 @@
        "content": [
         {
          "type": "text",
-         "text": "{\n  \"company\": {\n    \"name\": \"Estudio Norte SL\",\n    \"nif\": \"B76543214\",\n    \"series\": \"CU2026\"\n  },\n  \"summary\": {\n    \"quarter\": \"2026-Q4\",\n    \"invoices\": 1,\n    \"base\": \"180.00\",\n    \"vat\": \"37.80\",\n    \"unpaid\": 1,\n    \"unpaidTotal\": \"217.80\",\n    \"overdue\": 0,\n    \"overdueTotal\": \"0.00\",\n    \"collected\": \"0.00\"\n  },\n  \"invoices\": [\n    {\n      \"number\": \"CU2026-0001\",\n      \"date\": \"2026-10-07\",\n      \"client\": \"Acme Studio SL\",\n      \"nif\": \"B12345674\",\n      \"base\": \"180.00\",\n      \"vat\": \"37.80\",\n      \"total\": \"217.80\",\n      \"status\": \"SENT\",\n      \"due\": \"2026-10-22\",\n      \"paypal\": {\n        \"id\": \"INV2-MOCK-0001\",\n        \"status\": \"SENT\",\n        \"payerUrl\": \"https://www.sandbox.paypal.com/invoice/p/#INV2-MOCK-0001\"\n      },\n      \"hash\": \"F474F5A98CA58E94A9AE2A058D0B9277D649E1C66655A1441FA1C72B2F8B55D6\",\n      \"verifyUrl\": \"https://prewww2.aeat.es/wlpl/TIKE-CONT/ValidarQR?nif=B76543214&numserie=CU2026-0001&fecha=07-10-2026&importe=217.80\"\n    }\n  ],\n  \"clients\": [\n    {\n      \"name\": \"Acme Studio SL\",\n      \"nif\": \"B12345674\",\n      \"email\": \"billing@acme.example\",\n      \"invoices\": 1\n    }\n  ]\n}"
+         "text": "{\n  \"company\": {\n    \"name\": \"Estudio Norte SL\",\n    \"nif\": \"B76543214\",\n    \"series\": \"CU2026\"\n  },\n  \"summary\": {\n    \"quarter\": \"2026-Q4\",\n    \"invoices\": 1,\n    \"base\": \"180.00\",\n    \"vat\": \"37.80\",\n    \"unpaid\": 1,\n    \"unpaidTotal\": \"217.80\",\n    \"overdue\": 0,\n    \"overdueTotal\": \"0.00\",\n    \"collected\": \"0.00\"\n  },\n  \"invoices\": [\n    {\n      \"number\": \"CU2026-0001\",\n      \"date\": \"2026-10-07\",\n      \"client\": \"Acme Studio SL\",\n      \"nif\": \"B12345674\",\n      \"base\": \"180.00\",\n      \"vat\": \"37.80\",\n      \"total\": \"217.80\",\n      \"status\": \"SENT\",\n      \"outstanding\": \"217.80\",\n      \"due\": \"2026-10-22\",\n      \"paypal\": {\n        \"id\": \"INV2-MOCK-0001\",\n        \"status\": \"SENT\",\n        \"payerUrl\": \"https://www.sandbox.paypal.com/invoice/p/#INV2-MOCK-0001\"\n      },\n      \"hash\": \"98E98148C92396F7AB935A631D23B604E7D780ABCDF05500AA62CDDB6B5CA245\",\n      \"verifyUrl\": \"https://prewww2.aeat.es/wlpl/TIKE-CONT/ValidarQR?nif=B76543214&numserie=CU2026-0001&fecha=07-10-2026&importe=217.80\"\n    }\n  ],\n  \"clients\": [\n    {\n      \"name\": \"Acme Studio SL\",\n      \"nif\": \"B12345674\",\n      \"email\": \"billing@acme.example\",\n      \"invoices\": 1\n    }\n  ]\n}"
         }
        ],
        "structuredContent": {
@@ -746,13 +747,14 @@
           "vat": "37.80",
           "total": "217.80",
           "status": "SENT",
+          "outstanding": "217.80",
           "due": "2026-10-22",
           "paypal": {
            "id": "INV2-MOCK-0001",
            "status": "SENT",
            "payerUrl": "https://www.sandbox.paypal.com/invoice/p/#INV2-MOCK-0001"
           },
-          "hash": "F474F5A98CA58E94A9AE2A058D0B9277D649E1C66655A1441FA1C72B2F8B55D6",
+          "hash": "98E98148C92396F7AB935A631D23B604E7D780ABCDF05500AA62CDDB6B5CA245",
           "verifyUrl": "https://prewww2.aeat.es/wlpl/TIKE-CONT/ValidarQR?nif=B76543214&numserie=CU2026-0001&fecha=07-10-2026&importe=217.80"
          }
         ],
@@ -795,13 +797,13 @@
        "content": [
         {
          "type": "text",
-         "text": "{\n  \"ok\": true,\n  \"records\": 1,\n  \"lastHash\": \"F474F5A98CA58E94A9AE2A058D0B9277D649E1C66655A1441FA1C72B2F8B55D6\",\n  \"file\": \"ledger.json\"\n}"
+         "text": "{\n  \"ok\": true,\n  \"records\": 1,\n  \"lastHash\": \"98E98148C92396F7AB935A631D23B604E7D780ABCDF05500AA62CDDB6B5CA245\",\n  \"file\": \"ledger.json\"\n}"
         }
        ],
        "structuredContent": {
         "ok": true,
         "records": 1,
-        "lastHash": "F474F5A98CA58E94A9AE2A058D0B9277D649E1C66655A1441FA1C72B2F8B55D6",
+        "lastHash": "98E98148C92396F7AB935A631D23B604E7D780ABCDF05500AA62CDDB6B5CA245",
         "file": "ledger.json"
        },
        "isError": false
