@@ -1,0 +1,180 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cuadra.example/schema/record.schema.json",
+  "title": "Cuadra ledger record",
+  "description": "A record as stored in the Cuadra ledger (browser localStorage under cuadra-demo-v1, or the MCP ledger file): an invoice (RegistroAlta), a corrective invoice (RegistroAlta of type R1) or a cancellation (RegistroAnulacion). The hashed fields follow the AEAT VeriFactu hash specification; status (paid, overdue, cancelled, rectified) is derived from the chain and never stored as truth. Demo schema: it documents this implementation and is not the AEAT XSD.",
+  "oneOf": [
+    { "$ref": "#/$defs/alta" },
+    { "$ref": "#/$defs/rectificativa" },
+    { "$ref": "#/$defs/anulacion" }
+  ],
+  "$defs": {
+    "hash": { "type": "string", "pattern": "^[0-9A-F]{64}$", "description": "SHA-256, upper-case hex" },
+    "prevHash": { "type": "string", "pattern": "^([0-9A-F]{64})?$", "description": "Hash of the previous record, empty for the first record of the chain" },
+    "dmy": { "type": "string", "pattern": "^\\d{2}-\\d{2}-\\d{4}$", "description": "dd-mm-yyyy, the AEAT date format" },
+    "isoDay": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$" },
+    "money": { "type": "string", "pattern": "^\\d{1,12}\\.\\d{2}$", "description": "Amount in EUR with two decimals, as a string, computed by the engine" },
+    "timestamp": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:Z|[+-]\\d{2}:\\d{2})$", "description": "FechaHoraHusoGenRegistro" },
+    "link": {
+      "description": "Reference to the previous record of the chain, null for the first record",
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "required": ["nif", "number", "date", "hash"],
+          "additionalProperties": false,
+          "properties": {
+            "nif": { "type": "string", "minLength": 1, "maxLength": 20 },
+            "number": { "type": "string", "minLength": 1, "maxLength": 60 },
+            "date": { "$ref": "#/$defs/dmy" },
+            "hash": { "$ref": "#/$defs/hash" }
+          }
+        }
+      ]
+    },
+    "line": {
+      "type": "object",
+      "required": ["description", "qty", "price", "vat"],
+      "additionalProperties": false,
+      "properties": {
+        "description": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "qty": { "type": "number", "minimum": 0.01, "maximum": 10000 },
+        "price": { "type": "number", "minimum": 0.01, "maximum": 100000, "description": "Unit price in EUR before VAT" },
+        "vat": { "enum": [0, 4, 10, 21] }
+      }
+    },
+    "breakdown": {
+      "type": "object",
+      "required": ["rate", "base", "tax"],
+      "additionalProperties": false,
+      "properties": {
+        "rate": { "enum": [0, 4, 10, 21] },
+        "base": { "$ref": "#/$defs/money" },
+        "tax": { "$ref": "#/$defs/money" }
+      }
+    },
+    "recipient": {
+      "type": "object",
+      "required": ["name"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "maxLength": 120 },
+        "nif": { "type": "string", "maxLength": 20 }
+      }
+    },
+    "paypal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status"],
+      "properties": {
+        "id": { "type": "string", "maxLength": 64 },
+        "token": { "type": "string", "maxLength": 200, "description": "HMAC that binds the PayPal invoice to the session that created it. Never shared in verification links." },
+        "status": { "type": "string", "maxLength": 40 },
+        "payerUrl": { "type": "string", "maxLength": 400 },
+        "error": { "type": "string", "maxLength": 300 }
+      }
+    },
+    "alta": {
+      "title": "RegistroAlta, invoice (TipoFactura F1 or F2)",
+      "type": "object",
+      "required": ["nif", "number", "date", "type", "taxTotal", "total", "prevHash", "generatedAt", "hash", "issuerName", "recipient", "description", "lines", "breakdown", "prev", "qr"],
+      "additionalProperties": false,
+      "properties": {
+        "nif": { "type": "string", "minLength": 1, "maxLength": 20, "description": "IDEmisorFactura: issuer NIF" },
+        "number": { "type": "string", "minLength": 1, "maxLength": 60, "description": "NumSerieFactura" },
+        "date": { "$ref": "#/$defs/dmy" },
+        "type": { "enum": ["F1", "F2"] },
+        "taxTotal": { "$ref": "#/$defs/money" },
+        "total": { "$ref": "#/$defs/money" },
+        "prevHash": { "$ref": "#/$defs/prevHash" },
+        "generatedAt": { "$ref": "#/$defs/timestamp" },
+        "hash": { "$ref": "#/$defs/hash" },
+        "issuerName": { "type": "string", "maxLength": 120 },
+        "recipient": { "$ref": "#/$defs/recipient" },
+        "description": { "type": "string", "maxLength": 250 },
+        "lines": { "type": "array", "minItems": 1, "maxItems": 20, "items": { "$ref": "#/$defs/line" } },
+        "breakdown": { "type": "array", "minItems": 1, "maxItems": 4, "items": { "$ref": "#/$defs/breakdown" } },
+        "prev": { "$ref": "#/$defs/link" },
+        "qr": { "type": "string", "pattern": "^https://[^\\s]+$", "maxLength": 400, "description": "AEAT verification QR URL (test environment in the demo)" },
+        "email": { "type": "string", "maxLength": 254 },
+        "dueDate": { "$ref": "#/$defs/isoDay" },
+        "paidAt": { "$ref": "#/$defs/isoDay" },
+        "paidMethod": { "enum": ["BANK_TRANSFER", "CASH", "OTHER"] },
+        "paypal": { "$ref": "#/$defs/paypal" },
+        "sample": { "type": "boolean" }
+      }
+    },
+    "rectificativa": {
+      "title": "RegistroAlta, corrective invoice (TipoFactura R1, TipoRectificativa S: substitution)",
+      "type": "object",
+      "required": ["nif", "number", "date", "type", "taxTotal", "total", "prevHash", "generatedAt", "hash", "issuerName", "recipient", "description", "lines", "breakdown", "prev", "qr", "rectifies", "tipoRectificativa", "rectified"],
+      "additionalProperties": false,
+      "properties": {
+        "nif": { "type": "string", "minLength": 1, "maxLength": 20 },
+        "number": { "type": "string", "minLength": 1, "maxLength": 60 },
+        "date": { "$ref": "#/$defs/dmy" },
+        "type": { "const": "R1" },
+        "taxTotal": { "$ref": "#/$defs/money" },
+        "total": { "$ref": "#/$defs/money" },
+        "prevHash": { "$ref": "#/$defs/prevHash" },
+        "generatedAt": { "$ref": "#/$defs/timestamp" },
+        "hash": { "$ref": "#/$defs/hash" },
+        "issuerName": { "type": "string", "maxLength": 120 },
+        "recipient": { "$ref": "#/$defs/recipient" },
+        "description": { "type": "string", "maxLength": 250 },
+        "lines": { "type": "array", "minItems": 1, "maxItems": 20, "items": { "$ref": "#/$defs/line" }, "description": "The full corrected invoice, not the difference" },
+        "breakdown": { "type": "array", "minItems": 1, "maxItems": 4, "items": { "$ref": "#/$defs/breakdown" } },
+        "prev": { "$ref": "#/$defs/link" },
+        "qr": { "type": "string", "pattern": "^https://[^\\s]+$", "maxLength": 400 },
+        "rectifies": {
+          "description": "IDFacturaRectificada: the invoice this one replaces. It must exist earlier in the chain and must not be cancelled or rectified already.",
+          "type": "object",
+          "required": ["nif", "number", "date"],
+          "additionalProperties": false,
+          "properties": {
+            "nif": { "type": "string", "minLength": 1, "maxLength": 20 },
+            "number": { "type": "string", "minLength": 1, "maxLength": 60 },
+            "date": { "$ref": "#/$defs/dmy" }
+          }
+        },
+        "tipoRectificativa": { "const": "S" },
+        "rectified": {
+          "description": "ImporteRectificacion: base and VAT of the rectified invoice, which verifyChain compares with the original",
+          "type": "object",
+          "required": ["base", "tax"],
+          "additionalProperties": false,
+          "properties": {
+            "base": { "$ref": "#/$defs/money" },
+            "tax": { "$ref": "#/$defs/money" }
+          }
+        },
+        "reason": { "type": "string", "maxLength": 200 },
+        "email": { "type": "string", "maxLength": 254 },
+        "dueDate": { "$ref": "#/$defs/isoDay" },
+        "paidAt": { "$ref": "#/$defs/isoDay" },
+        "paidMethod": { "enum": ["BANK_TRANSFER", "CASH", "OTHER"] },
+        "paypal": { "$ref": "#/$defs/paypal" },
+        "sample": { "type": "boolean" }
+      }
+    },
+    "anulacion": {
+      "title": "RegistroAnulacion, cancellation of an unpaid invoice",
+      "type": "object",
+      "required": ["kind", "nif", "number", "date", "prevHash", "generatedAt", "hash", "issuerName", "reason", "prev"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "const": "anulacion" },
+        "nif": { "type": "string", "minLength": 1, "maxLength": 20, "description": "IDEmisorFacturaAnulada" },
+        "number": { "type": "string", "minLength": 1, "maxLength": 60, "description": "NumSerieFacturaAnulada" },
+        "date": { "$ref": "#/$defs/dmy" },
+        "prevHash": { "$ref": "#/$defs/prevHash" },
+        "generatedAt": { "$ref": "#/$defs/timestamp" },
+        "hash": { "$ref": "#/$defs/hash" },
+        "issuerName": { "type": "string", "maxLength": 120 },
+        "reason": { "type": "string", "maxLength": 200 },
+        "prev": { "$ref": "#/$defs/link" },
+        "sample": { "type": "boolean" }
+      }
+    }
+  }
+}

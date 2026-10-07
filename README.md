@@ -15,7 +15,7 @@ Cuadra turns a sentence into a compliant invoice, collects it with PayPal, chase
 | **Collect** | (on confirm) | Sends a PayPal invoice that carries the tax-agency verification link. Status and payments sync back. |
 | **Chase** | "Chase every overdue invoice" | One proposal per late invoice: a PayPal reminder if it is on PayPal, or a PayPal invoice if the client still owes you by transfer. |
 | **Reconcile** | "Hotel Mirador paid by bank transfer" | Finds the invoice and records the payment, in PayPal too. |
-| **Correct** | "Annul the duplicate invoice" | Cancels it in PayPal and appends a VeriFactu cancellation record (RegistroAnulacion). Nothing is ever edited or deleted. Paid invoices are refused: they need a corrective invoice. |
+| **Correct** | "Annul the duplicate invoice", "Rectify CU-0003: the price was 500" | An unpaid invoice is cancelled in PayPal with a VeriFactu cancellation record (RegistroAnulacion). A paid invoice gets a corrective invoice (R1, substitution) that points at the original; the original shows as RECTIFIED. Nothing is ever edited or deleted. |
 | **Declare** | "Prepare my VAT return" | Modelo 303 draft for the quarter that is due (boxes 01–09 and 27) with the days left to file, computed from the ledger, never by the model. |
 | **Ask the ledger** | "Who owes me money?", "Revenue by client this quarter" | Proposes a chart, a table or a single figure (an **Insight**) that you can pin to the Insights board. The agent only picks what to show; the browser computes every number from the ledger. |
 | **Delegate** | Any MCP client | Claude, ChatGPT, Cursor or your own agent can do all of the above through the Cuadra MCP server. |
@@ -189,6 +189,12 @@ The agent never types a total: `draft_invoice` computes it, `issue_invoice` appe
 - Verification links carry only a whitelist of the record's fields (no PayPal token, no client email) in the URL fragment, which browsers never send. The page rebuilds the record with strict types and sizes (16 KB, inflate capped), recomputes the hash, rebuilds the AEAT QR from the hashed fields and encodes a payer link only if it is a PayPal URL. It makes no network request.
 - No new origins: the Content-Security-Policy is unchanged (`script-src 'self'`, fonts only from Google Fonts), and a test pins it.
 
+## Governance, scalability, market
+
+- **Governance.** The model proposes and a person decides; every record is hash-chained and re-verified; status is derived, never stored; Activity logs who did what. The threat model is in [SECURITY.md](SECURITY.md) and the rules, limits and retention in [docs/COMPLIANCE.md](docs/COMPLIANCE.md) (sandbox only, not certified, no electronic signature, browser ledger: it says what production adds).
+- **Scalability.** One isomorphic engine, stateless functions, a bounded model context. The path from the browser ledger to a server-side append-only ledger per issuer is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), and the record format is a JSON Schema ([docs/schema/record.schema.json](docs/schema/record.schema.json), validated by `npm test`).
+- **Market.** Spain's autónomos and companies must use compliant software from 2027; gestorías are the multiplier. Plans, CAC, LTV, margin and 12-month milestones are in [docs/MONETIZATION.md](docs/MONETIZATION.md), all labelled as estimates.
+
 ## Run it
 
 ```bash
@@ -215,9 +221,9 @@ public/     index.html · verify.html · app.js · verify.js · vendor/ (QR, AG 
   js/       verifactu.js · ledger.js (engine) · chain.js · checks.js · plan.js · proposal.js · document.js · share.js
             activity.js · tour.js · fmt.js · qr.js · terminal.js (MCP replay) · status.js · grid.js (ledger grid) · widgets.js + insights.js (Ask the ledger) · say.js (the agent's sentence) · vendor.js (lazy loader + SRI)
 styles/     input.css (design tokens and components) → public/styles.css via Tailwind
-docs/       og.html (source of public/og.png)
+docs/       ARCHITECTURE.md · COMPLIANCE.md · MONETIZATION.md · schema/record.schema.json · og.html (source of public/og.png)
 mcp/        server.js                                MCP server (stdio)
-scripts/    test.js · ui-test.js · mcp-test.js · shots.js · social-card.js · paypal-setup.js · mcp-demo.js
+scripts/    test.js · ui-test.js · mcp-test.js · schema-test.js · shots.js · social-card.js · paypal-setup.js · mcp-demo.js
 ```
 
 ## Status
