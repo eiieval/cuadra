@@ -19,7 +19,7 @@ export function planProgress(steps) {
 // The steps "Approve all" runs: low-risk, still open, not running.
 export const pendingLowRisk = (steps) => steps.map((a, ai) => ({ a, ai })).filter(({ a }) => LOW_RISK.includes(a.type) && !resolved(a) && !a.busy);
 // Invoices, payments and cancellations are never batch-approved. A VAT draft and an insight change nothing in the ledger.
-export const hasHighRisk = (steps) => steps.some((a) => !LOW_RISK.includes(a.type) && a.type !== 'show_vat_return' && a.type !== 'propose_widget');
+export const hasHighRisk = (steps) => steps.some((a) => !LOW_RISK.includes(a.type) && a.type !== 'show_vat_return' && a.type !== 'propose_widget' && a.type !== 'propose_view');
 
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
@@ -35,6 +35,7 @@ export function planSummary(steps) {
   add(worked('propose_cancel'), (n) => `${plural(n, 'invoice')} cancelled`);
   if (worked('show_vat_return')) parts.push('VAT draft reviewed');
   add(worked('propose_widget'), (n) => `${plural(n, 'insight')} pinned`);
+  if (worked('propose_view')) parts.push('view applied');
   add(steps.filter((a) => a.done && a.ok === false && !dismissed(a)).length, (n) => `${n} not done`);
   add(steps.filter((a) => !a.done && a.dead).length, (n) => `${n} no longer needed`);
   add(steps.filter(dismissed).length, (n) => `${n} dismissed`);

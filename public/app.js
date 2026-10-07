@@ -10,6 +10,7 @@ import { engineChecks, checksHtml, blockers, boundsProblems } from './js/checks.
 import { normalizeProposal as normalize, normalizeRectify, proposalPaperHtml, proposalActionsHtml } from './js/proposal.js';
 import { detectLang, synthReply } from './js/say.js';
 import { planButton, plansConfigured } from './js/plans.js';
+import { cleanView, reduceView, viewRows, viewParts, viewSummary } from './js/view.js';
 import { attestPayload, checkAttestation, fetchAttestKey, attestWords } from './js/attest.js';
 import { isPlan, planProgress, planSummary, pendingLowRisk, hasHighRisk } from './js/plan.js';
 import { reduceActivity, activityRows, activityHtml } from './js/activity.js';
@@ -327,6 +328,7 @@ function describe(a) {
   if (a.type === 'propose_cancel') return `Cancel ${n}`;
   if (a.type === 'propose_rectify') return `Corrective invoice for ${n}`;
   if (a.type === 'show_vat_return') return 'Modelo 303 draft';
+  if (a.type === 'propose_view') return `View: ${cleanView(a.args).title}`;
   if (a.type === 'propose_widget') return `Insight: ${cleanSpec(a.args).title}`;
   return String(a.type);
 }
@@ -342,6 +344,7 @@ async function perform(a, act) {
   }
   else if (act === 'open-vat') r = { ok: true, text: 'Opened the VAT draft.' };
   else if (act === 'pin') r = pinWidget(a.args);
+  else if (act === 'apply-view') r = applyAgentView(a.args);
   else if (!rec) r = { ok: false, text: 'Invoice not found.' };
   else if (act === 'remind') r = await remind(rec);
   else if (act === 'collect') r = await sendWithPaypal(rec);
@@ -368,6 +371,29 @@ async function run(mi, ai, act) {
 }
 
 // "Approve all reminders and collections": the low-risk steps of a plan, one after the other.
+// The agent's view of the ledger (propose_view): applied to the AG Grid, or to the cards of a phone, until it is reset.
+let activeView = null;
+function renderViewBar() {
+  $('#viewBar').hidden = !activeView;
+  $('#viewText').textContent = activeView ? `${activeView.title} · ${viewSummary(activeView)}` : '';
+}
+function setLedgerView(view) {
+  activeView = reduceView(activeView, view ? { type: 'apply', view } : { type: 'reset' });
+  $('#ledgerSearch').value = activeView?.client || '';
+  gridCtl?.applyView(activeView);
+  renderViewBar();
+  renderInvoices();
+}
+function applyAgentView(args) {
+  const v = cleanView(args);
+  setLedgerView(v);
+  log('agent', 'view_applied', '', `${v.title} · ${viewSummary(v)}`);
+  closeSheet();
+  $('#ledger').scrollIntoView({ behavior: reducedMotion() ? 'auto' : 'smooth', block: 'start' });
+  return { ok: true, text: `View applied: ${v.title}. Use Reset view above the ledger to clear it.` };
+}
+$('#viewReset').onclick = () => { if (activeView) log('you', 'view_reset', '', 'Ledger view cleared'); setLedgerView(null); clearLedgerFilters(); save(); renderActivity(); };
+
 const ACT_OF = { propose_reminder: 'remind', propose_collect: 'collect' };
 async function approveAll(mi) {
   const m = state.chat[mi];
@@ -406,7 +432,7 @@ function vatTable(v, compact = false) {
 
 // A step the ledger no longer allows (invoice gone, already settled...): there is nothing left to approve.
 function isDeadEnd(a) {
-  if (a.type === 'propose_invoice' || a.type === 'show_vat_return' || a.type === 'propose_widget') return false;
+  if (a.type === 'propose_invoice' || a.type === 'show_vat_return' || a.type === 'propose_widget' || a.type === 'propose_view') return false;
   const rec = findInvoice(state.records, a.args?.number);
   if (!rec) return true;
   const st = status(rec);
@@ -426,6 +452,12 @@ function actionCard(a, mi, ai, inPlan = false) {
   if (a.type === 'show_vat_return') {
     const q = /^\d{4}-Q[1-4]$/.test(a.args?.quarter || '') ? a.args.quarter : returnQuarter(today());
     return `<div class="${card()}"><div class="flex items-center gap-2"><div class="text-xs text-soft">Modelo 303 draft · ${esc(q)}</div><button class="btn-ghost ml-auto !min-h-8" data-act="open-vat" data-id="${id}" data-q="${esc(q)}">Open</button></div><div class="mt-1">${vatTable(vatReturn(state.records, q), true)}</div>${done}</div>`;
+  }
+  if (a.type === 'propose_view') {
+    // A view is a filter and an order, nothing else: the card says what it will do, the browser applies it to the ledger.
+    const v = cleanView(a.args);
+    const parts = viewParts(v);
+    return `<div class="${card()}"><div class="text-xs text-soft">Ledger view</div><div class="mt-1 text-sm font-semibold">${esc(v.title)}</div><ul class="mt-1 space-y-0.5 text-xs text-soft">${(parts.length ? parts : ['no filter, no sorting']).map((p) => `<li>${esc(p)}</li>`).join('')}</ul>${done || buttons(id, 'apply-view', 'Apply view', 'Dismiss', a.busy)}</div>`;
   }
   if (a.type === 'propose_widget') {
     // The figures come from widgetData() on the ledger as it is now; the model only chose what to show.
@@ -597,6 +629,7 @@ function loadGrid() {
         onShown: (list) => { $('#ledgerCount').textContent = `${ledgerCountText()}${list.length !== state.records.length ? ` · ${list.length} shown` : ''}`; },
       });
       gridState = 'ready';
+      if (activeView) gridCtl.applyView(activeView);
     } catch {
       try { gridCtl?.destroy(); } catch { /* nothing to clean */ }
       gridCtl = null;
@@ -634,7 +667,12 @@ function renderInvoices() {
   }
   const brokenAt = brokenIndex();
   const lit = (number) => flashNumber() === number;
-  $('#rows').innerHTML = state.records.map((r, i) => ({ r, i })).reverse().map(({ r, i }) => {
+  const shown = viewRows(ledgerRows(state.records, { today: today(), flashNumber: flashNumber(), brokenAt: brokenIndex() }), activeView).map((row) => ({ r: state.records[row.i], i: row.i }));
+  if (!shown.length) {
+    $('#rows').innerHTML = '<tr class="row-empty"><td colspan="6"><div class="empty"><div class="empty-title">No invoices match this view</div><p>Use Reset view above the ledger to see everything again.</p></div></td></tr>';
+    return;
+  }
+  $('#rows').innerHTML = shown.map(({ r, i }) => {
     const mark = `${lit(r.number) ? ' row-flash' : ''}${i === brokenAt ? ' row-bad' : ''}`;
     const altered = i === brokenAt ? ' <span class="badge badge-bad" title="This record no longer matches its hash">Altered</span>' : '';
     if (isAnulacion(r)) {

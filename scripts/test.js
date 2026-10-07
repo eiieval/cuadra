@@ -322,6 +322,23 @@ expect('per-IP rate limit kicks in (429)', last === 429);
   resetGuard();
 }
 
+// Agent views (W2): "show me overdue invoices sorted by amount" proposes a view, it never chases or issues anything
+{
+  const viewTool = TOOLS.find((t) => t.function.name === 'propose_view')?.function;
+  const { VIEW_STATUSES, VIEW_SORTS, VIEW_DIRS, VIEW_COLUMNS } = await import('../public/js/view.js');
+  const p = viewTool?.parameters.properties;
+  expect('the agent has a propose_view tool whose enums are the ones the page can apply, and the system prompt has the rule', Boolean(viewTool) && ACTIONS.includes('propose_view') && JSON.stringify(p.status.enum) === JSON.stringify(VIEW_STATUSES) && JSON.stringify(p.sortBy.enum) === JSON.stringify(VIEW_SORTS) && JSON.stringify(p.sortDir.enum) === JSON.stringify(VIEW_DIRS) && JSON.stringify(p.columns.items.enum) === JSON.stringify(VIEW_COLUMNS) && SYSTEM.includes('propose_view') && /Apply view/.test(SYSTEM) && /never write amounts/.test(SYSTEM));
+  const viewCtx = { clients: [{ name: 'Acme Studio SL', nif: 'B12345674', email: 'a@acme.example' }], invoices: [{ number: 'SMP-0004', client: 'Hotel Mirador SL', status: 'OVERDUE', total: 990, paypal: false }] };
+  const askView = async (message) => (await call(agent, { headers: { 'x-forwarded-for': '13.0.0.1' }, body: { message, context: viewCtx } })).json;
+  const sorted = await askView('show me overdue invoices sorted by amount');
+  expect('mock: "show me overdue invoices sorted by amount" proposes one view (overdue, by amount, biggest first), not reminders', sorted.actions.length === 1 && sorted.actions[0].type === 'propose_view' && sorted.actions[0].args.status === 'OVERDUE' && sorted.actions[0].args.sortBy === 'total' && sorted.actions[0].args.sortDir === 'desc' && sorted.actions[0].args.title === 'Overdue invoices, by amount' && sorted.synthesize === true);
+  const other = await askView('Show unpaid invoices for Acme, oldest first');
+  expect('mock: a client and an order are read too, and a column can be hidden', other.actions[0].args.client === 'Acme Studio SL' && other.actions[0].args.status === 'OPEN' && other.actions[0].args.sortBy === 'number' && (await askView('hide the hash column')).actions[0].args.columns.join() === 'number,client,total,status,due');
+  expect('mock: chasing, figures and invoicing are not views (reminders, a widget and an invoice come out as before)', (await askView('Chase every overdue invoice')).actions[0].type !== 'propose_view' && (await askView('Who owes me money?')).actions[0].type === 'propose_widget' && (await askView('Invoice Acme Studio SL without VAT for 3 hours at 60')).actions[0].type === 'propose_invoice');
+  const { widgetQuestion, viewQuestion } = await import('../lib/llm.js');
+  expect('mock: a request that is not about looking at the ledger is null', viewQuestion('hello there', viewCtx) === null && viewQuestion('Prepare my VAT return', viewCtx) === null && widgetQuestion('show me overdue invoices sorted by amount', viewCtx) === null);
+}
+
 // PayPal webhooks (B7, demo-grade): the signature is verified by PayPal (mock: one known test signature), events are
 // deduplicated by event_id, kept in memory (last 200) and read back per invoice, bound to the browser that created the invoice by its HMAC token.
 {

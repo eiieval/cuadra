@@ -235,6 +235,7 @@ export function createLedgerGrid(host, ag, { rows = [], onShown, reducedMotion =
   let data = rows;
   let lastTotals = '';
   let api = null;
+  let viewColumns = null; // the columns an agent view asked for (null: the default, which follows the width)
 
   const span = (p) => (p.node.rowPinned ? 2 : p.data?.kind === 'anulacion' ? 3 : 1);
   const columnDefs = [
@@ -292,6 +293,7 @@ export function createLedgerGrid(host, ag, { rows = [], onShown, reducedMotion =
 
   // The five essential columns need about 540px; the due date shows from 645px and the hash from 745px.
   const fitColumns = (width) => {
+    if (viewColumns) return;
     api.setColumnsVisible(['due'], width >= 645);
     api.setColumnsVisible(['hash'], width >= 745);
   };
@@ -346,6 +348,20 @@ export function createLedgerGrid(host, ag, { rows = [], onShown, reducedMotion =
     update(next) { data = next; api.setGridOption('rowData', next); refresh(); },
     setChip(key) { chip = CHIPS.some(([k]) => k === key) ? key : 'all'; api.onFilterChanged(); },
     setQuick(text) { quick = String(text || '').slice(0, 60); api.setGridOption('quickFilterText', quick); },
+    // An agent view (already cleaned by cleanView): status chip, quick filter, sort and visible columns. null resets all four.
+    applyView(view) {
+      const v = view || null;
+      chip = v && CHIPS.some(([k]) => k === v.status.toLowerCase()) ? v.status.toLowerCase() : 'all';
+      quick = v?.client || '';
+      api.setGridOption('quickFilterText', quick);
+      api.onFilterChanged();
+      api.applyColumnState({ state: v?.sortBy ? [{ colId: v.sortBy, sort: v.sortDir === 'desc' ? 'desc' : 'asc' }] : [], defaultState: { sort: null } });
+      viewColumns = v?.columns || null;
+      if (viewColumns) {
+        api.setColumnsVisible(['number', 'client', 'total', 'status', 'due', 'hash'].filter((c) => viewColumns.includes(c)), true);
+        api.setColumnsVisible(['number', 'client', 'total', 'status', 'due', 'hash'].filter((c) => !viewColumns.includes(c)), false);
+      } else fitColumns(host.clientWidth);
+    },
     get chip() { return chip; },
     get quick() { return quick; },
     // The rows that are showing, in the order they are showing, written in the register format.

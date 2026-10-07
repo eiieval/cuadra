@@ -6,6 +6,7 @@ import { findInvoice, returnQuarter } from './ledger.js';
 import { eur } from './fmt.js';
 import { normalizeProposal, normalizeRectify } from './proposal.js';
 import { countText, widgetData } from './widgets.js';
+import { cleanView, viewSummary } from './view.js';
 
 // "es" when the person wrote in Spanish: accents and a few words that English does not share.
 export const detectLang = (text) => (/[¿¡áéíóúñü]|\b(factura|facturas|cierra|cierre|trimestre|debe|deben|cuánto|cuanto|quién|quien|dame|ingresos|cliente|clientes|pagó|pagado|este|mes|año)\b/i.test(String(text ?? '')) ? 'es' : 'en');
@@ -27,12 +28,14 @@ const WORDS = {
     cancel: (client, number, amount) => `Cancel ${number} (${client}, ${amount}) with a chained cancellation record.`,
     rectify: (client, number, amount, total) => `Corrective invoice for ${number} (${client}): ${amount} becomes ${total}. The paid invoice stays as it is.`,
     vat: (quarter) => `Your Modelo 303 draft for ${quarter}.`,
+    view: (title, how) => `View: ${title} (${how}). Apply it to the ledger.`,
     owes: (count, total) => `Here is who owes you money: ${count}, ${total}`,
     widget: (title, count, total) => `${title}: ${count ? `${count}, ` : ''}${total}`,
     planClose: 'Plan to close the quarter',
     plan: 'Plan',
     parts: {
       reminder: (n) => plural(n, 'reminder'), collect: (n) => `${plural(n, 'collection')} with PayPal`, invoice: (n) => plural(n, 'invoice draft'),
+      view: (n) => plural(n, 'ledger view'),
       markPaid: (n) => `${plural(n, 'payment')} to record`, cancel: (n) => plural(n, 'cancellation'), rectify: (n) => plural(n, 'corrective invoice'), widget: (n) => plural(n, 'insight'), vat: 'your VAT draft',
     },
     count: (data) => countText(data),
@@ -50,12 +53,14 @@ const WORDS = {
     cancel: (client, number, amount) => `Anular ${number} (${client}, ${amount}) con un registro de anulación encadenado.`,
     rectify: (client, number, amount, total) => `Factura rectificativa de ${number} (${client}): de ${amount} a ${total}. La factura cobrada no se modifica.`,
     vat: (quarter) => `Tu borrador del Modelo 303 de ${quarter}.`,
+    view: (title, how) => `Vista: ${title} (${how}). Aplícala al libro.`,
     owes: (count, total) => `Esto es lo que te deben: ${count}, ${total}`,
     widget: (title, count, total) => `${title}: ${count ? `${count}, ` : ''}${total}`,
     planClose: 'Plan para cerrar el trimestre',
     plan: 'Plan',
     parts: {
       reminder: (n) => plural(n, 'recordatorio'), collect: (n) => `${plural(n, 'cobro')} con PayPal`, invoice: (n) => plural(n, 'borrador de factura', 'borradores de factura'),
+      view: (n) => plural(n, 'vista del libro', 'vistas del libro'),
       markPaid: (n) => `${plural(n, 'pago')} por registrar`, cancel: (n) => plural(n, 'anulación', 'anulaciones'), rectify: (n) => plural(n, 'factura rectificativa', 'facturas rectificativas'), widget: (n) => plural(n, 'gráfico'), vat: 'tu borrador del IVA',
     },
     count: (data) => {
@@ -84,6 +89,7 @@ function one(a, w, { records, today }) {
     case 'propose_cancel': { const r = inv(a.args?.number); return w.cancel(who(r) || a.args?.number, a.args?.number, eur(r?.total)); }
     case 'propose_rectify': { const r = inv(a.args?.number); return w.rectify(who(r) || a.args?.number, a.args?.number, eur(r?.total), eur(totals(normalizeRectify(a.args).lines).total)); }
     case 'show_vat_return': return w.vat(/^\d{4}-Q[1-4]$/.test(a.args?.quarter || '') ? a.args.quarter : returnQuarter(today));
+    case 'propose_view': { const v = cleanView(a.args); return w.view(v.title, viewSummary(v)); }
     case 'propose_widget': {
       const d = widgetData(records, a.args, today);
       if (d.spec.metric === 'outstanding' && d.spec.groupBy === 'client' && !d.spec.status) return w.owes(w.count(d), d.text);
@@ -108,6 +114,7 @@ export function synthReply(actions, { records = [], today, lang = 'en' } = {}) {
     count('propose_cancel') && w.parts.cancel(count('propose_cancel')),
     count('propose_rectify') && w.parts.rectify(count('propose_rectify')),
     count('propose_widget') && w.parts.widget(count('propose_widget')),
+    count('propose_view') && w.parts.view(count('propose_view')),
     count('show_vat_return') && w.parts.vat,
   ].filter(Boolean);
   const closing = count('show_vat_return') && (count('propose_reminder') || count('propose_collect'));

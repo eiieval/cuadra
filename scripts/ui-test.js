@@ -528,6 +528,34 @@ expect('the CSP gained no origin: fonts and styles still come only from Google F
   expect('app: the browser asks for the signature right after issuing (and for the R1), silently when the deployment has no key', /await attest\(rec\);/.test(appSrc) && /await attest\(record\);/.test(appSrc) && /if \(!\(await fetchAttestKey\(\)\)\) return;/.test(appSrc) && /if \(r\.error \|\| !r\.signature\) return;/.test(appSrc));
 }
 
+// Agent views (W2): propose_view is cleaned to a view the page can apply, the reducer applies and resets it, and the same
+// view orders the cards of a phone like it orders the AG Grid
+{
+  const { cleanView, reduceView, viewRows, viewParts, viewSummary, viewTitle, isPlainView, VIEW_COLUMNS } = await import('../public/js/view.js');
+  const today = '2026-10-04';
+  const rows = ledgerRows(sample, { today });
+  const numbers = (list) => list.map((r) => r.number).join();
+  const askedView = { title: 'Overdue invoices by amount', status: 'overdue', sortBy: 'total', sortDir: 'DESC', columns: ['number', 'total'] };
+  expect('view: cleanView reduces what the model wrote (status upper-cased, sort and direction from the lists, number always among the columns)', JSON.stringify(cleanView(askedView)) === JSON.stringify({ title: 'Overdue invoices by amount', status: 'OVERDUE', client: '', sortBy: 'total', sortDir: 'desc', columns: ['number', 'total'] }) && cleanView({ columns: ['total', 'client'] }).columns.join() === 'number,client,total');
+  expect('view: unknown values fall back to no restriction, text is bounded, columns that are all of them are no restriction', JSON.stringify(cleanView({ status: 'DELETE', sortBy: 'hash', sortDir: 'sideways', columns: ['password', 'x'], client: `x\u0000\n${'y'.repeat(200)}`, title: 'T'.repeat(200) })) === JSON.stringify({ title: 'T'.repeat(60), status: 'ALL', client: `x ${'y'.repeat(58)}`, sortBy: '', sortDir: '', columns: null }) && cleanView({ columns: VIEW_COLUMNS }).columns === null && isPlainView(cleanView(null)) && cleanView('nope').status === 'ALL' && cleanView({ sortBy: 'due' }).sortDir === 'asc');
+  expect('view: it has a title of its own when the model gives none', cleanView({ status: 'PAID', client: 'Acme', sortBy: 'due' }).title === 'Paid invoices for Acme, by due date' && viewTitle(cleanView({})) === 'All invoices');
+  expect('view: reducer apply replaces the view, reset (or a plain view) clears it, and it never mutates the previous one', (() => { const a = reduceView(null, { type: 'apply', view: askedView }); const b = reduceView(a, { type: 'apply', view: { status: 'PAID' } }); return a.status === 'OVERDUE' && b.status === 'PAID' && b.sortBy === '' && reduceView(b, { type: 'reset' }) === null && reduceView(b, { type: 'apply', view: {} }) === null && reduceView(a, { type: 'nonsense' }) === null && a.status === 'OVERDUE'; })());
+  const overdue = viewRows(rows, cleanView({ status: 'OVERDUE', sortBy: 'total', sortDir: 'desc' }));
+  expect('view: "overdue sorted by amount" keeps the overdue invoices, biggest first (the cards of a phone and the grid share it)', numbers(overdue) === 'UI-0004,UI-0005' && overdue.every((r) => r.status === 'OVERDUE') && overdue[0].totalNum >= overdue[1].totalNum && numbers(viewRows(rows, cleanView({ status: 'OVERDUE', sortBy: 'total', sortDir: 'asc' }))) === 'UI-0005,UI-0004');
+  expect('view: status filters follow the grid chips (open includes overdue, paid, cancelled shows the cancellation records too)', numbers(viewRows(rows, cleanView({ status: 'OPEN' }))) === numbers(rows.filter((r) => matchesChip(r, 'open'))) && viewRows(rows, cleanView({ status: 'PAID' })).every((r) => r.status === 'PAID') && viewRows(rows, cleanView({ status: 'CANCELLED' })).length === rows.filter((r) => matchesChip(r, 'cancelled')).length);
+  expect('view: the client filter works like the grid quick filter (every word, case-insensitive, name or NIF)', numbers(viewRows(rows, cleanView({ client: 'acme studio' }))) === numbers(rows.filter((r) => /acme studio/i.test(r.client))) && viewRows(rows, cleanView({ client: 'B12345674' })).length > 0 && viewRows(rows, cleanView({ client: 'nobody here' })).length === 0);
+  const byDue = viewRows(rows, cleanView({ status: 'OPEN', sortBy: 'due', sortDir: 'asc' }));
+  const byNumber = viewRows(rows, cleanView({ sortBy: 'number', sortDir: 'desc' }));
+  expect('view: sort by due date puts the earliest first and rows without a value last; by number it is numeric and reversible', byDue.every((r, k) => k === 0 || byDue[k - 1].due <= r.due) && byNumber[0].number === 'UI-0007' && byNumber.at(-1).number === 'UI-0001' && viewRows(rows, cleanView({ sortBy: 'total', sortDir: 'desc' })).at(-1).kind === 'anulacion' && viewRows(rows, cleanView({ sortBy: 'total', sortDir: 'asc' })).at(-1).kind === 'anulacion');
+  expect('view: no view (or a plain one) leaves the rows as they are', viewRows(rows, null) === rows && viewRows(rows, cleanView({})) === rows);
+  expect('view: the card says what it will do, in plain words', viewParts(cleanView(askedView)).join('|') === 'status: overdue|sorted by amount, highest first|columns: number, total' && viewSummary(cleanView({})) === 'no filter, no sorting' && viewSummary(cleanView({ client: 'Acme', sortBy: 'due', sortDir: 'desc' })) === 'matching "Acme" · sorted by due date, latest first');
+  expect('view: Activity knows "View applied", the plan treats a view as low risk and counts it in the summary', EVENTS.view_applied === 'View applied' && EVENTS.view_reset === 'View reset' && hasHighRisk([{ type: 'propose_view' }]) === false && planSummary([{ type: 'propose_view', done: 'View applied', ok: true }]).includes('view applied'));
+  const said = synthReply([{ type: 'propose_view', args: askedView }], { records: sample, today });
+  expect('view: the agent sentence names the view and what it does, with no figure from the model', said === 'View: Overdue invoices by amount (status: overdue · sorted by amount, highest first · columns: number, total). Apply it to the ledger.' && synthReply([{ type: 'propose_view', args: askedView }], { records: sample, today, lang: 'es' }).startsWith('Vista: '));
+  const appSrc = read('public/app.js'), gridSrc = read('public/js/grid.js'), htmlSrc = read('public/index.html');
+  expect('view: the page has the Apply view card, the Reset view chip above the ledger, and the grid takes a view (chip, quick filter, sort, columns)', /buttons\(id, 'apply-view', 'Apply view'/.test(appSrc) && htmlSrc.includes('id="viewReset"') && htmlSrc.includes('Reset view') && /applyView\(view\)/.test(gridSrc) && /applyColumnState/.test(gridSrc) && /setColumnsVisible/.test(gridSrc) && /log\('agent', 'view_applied'/.test(appSrc));
+}
+
 // Gestoría mode (B6): the storage namespace, the index of companies, the second sample company and the numbers of the overview
 {
   const primary = { nif: 'B76543214', name: 'Estudio Norte SL' };
