@@ -1,6 +1,6 @@
 {
   "outputDirectory": "public",
-  "functions": { "api/agent.js": { "maxDuration": 30 }, "api/paypal.js": { "maxDuration": 30 } },
+  "functions": { "api/agent.js": { "maxDuration": 30 }, "api/paypal.js": { "maxDuration": 30 }, "api/paypal-webhook.js": { "maxDuration": 30 } },
   "headers": [
     {
       "source": "/(.*)",

@@ -1,5 +1,7 @@
 // Offline tests: VeriFactu engine against the official AEAT example, QR generation, and API security. No keys needed.
 import { readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import vm from 'node:vm';
 import { altaHashInput, anulacionHashInput, sha256Hex, buildAlta, buildAnulacion, verifyChain, buildRectificativa, isRectificativa, qrUrl, totals, validNif, altaXml, recordXml } from '../public/js/verifactu.js';
@@ -201,6 +203,52 @@ expect('history keeps user/assistant turns only, merged and alternating from the
 let last = 0;
 for (let i = 0; i < 21; i++) last = (await call(agent, { headers: { 'x-forwarded-for': '9.9.9.9' }, body: {} })).status;
 expect('per-IP rate limit kicks in (429)', last === 429);
+// PayPal webhooks (B7, demo-grade): the signature is verified by PayPal (mock: one known test signature), events are
+// deduplicated by event_id, kept in memory (last 200) and read back per invoice, bound to the session by the HMAC token.
+{
+  const { default: webhook } = await import('../api/paypal-webhook.js');
+  const events = await import('../lib/events.js');
+  events.clear();
+  const inv = created.json;
+  const hdr = (sig) => ({ 'paypal-auth-algo': 'SHA256withRSA', 'paypal-cert-url': 'https://api.sandbox.paypal.com/v1/notifications/certs/CERT-1', 'paypal-transmission-id': 'tx-1', 'paypal-transmission-sig': sig, 'paypal-transmission-time': '2026-10-07T10:00:00Z', 'x-forwarded-for': '7.7.7.7' });
+  const paidEvent = (id, invoiceId = inv.id) => ({ id, event_type: 'INVOICING.INVOICE.PAID', create_time: '2026-10-07T10:00:00Z', resource: { invoice: { id: invoiceId, status: 'PAID' } } });
+  const bad = await call(webhook, { headers: hdr('forged'), body: paidEvent('WH-EVT-1') });
+  expect('webhook: a delivery whose signature PayPal does not verify is rejected (400, generic) and nothing is stored', bad.status === 400 && /Invalid webhook/.test(bad.json?.error) && events.size() === 0);
+  const noHeaders = await call(webhook, { headers: { 'x-forwarded-for': '7.7.7.8' }, body: paidEvent('WH-EVT-1') });
+  expect('webhook: a delivery without the PayPal signature headers is rejected before anything is verified', noHeaders.status === 400 && events.size() === 0);
+  const okHook = await call(webhook, { headers: hdr('MOCK-VALID-SIGNATURE'), body: paidEvent('WH-EVT-1') });
+  expect('webhook: the known test signature verifies and the event is stored', okHook.status === 200 && okHook.json?.ok === true && okHook.json.duplicate === false && events.size() === 1);
+  const dup = await call(webhook, { headers: hdr('MOCK-VALID-SIGNATURE'), body: paidEvent('WH-EVT-1') });
+  expect('webhook: the same event_id twice is stored once and answered as a duplicate', dup.status === 200 && dup.json.duplicate === true && events.size() === 1);
+  expect('webhook: only POST is accepted', (await call(webhook, { method: 'GET' })).status === 405);
+  const pulled = await call(paypal, { headers: { 'x-forwarded-for': '8.8.8.8' }, body: { op: 'events', invoices: [{ id: inv.id, token: inv.token }] } });
+  expect('events: the session that owns the invoice gets its event (type, status, invoice id, time) and no event_id', pulled.status === 200 && pulled.json.events.length === 1 && pulled.json.events[0].invoiceId === inv.id && pulled.json.events[0].status === 'PAID' && pulled.json.events[0].type === 'INVOICING.INVOICE.PAID' && !('id' in pulled.json.events[0]));
+  const stolen = await call(paypal, { headers: { 'x-forwarded-for': '8.8.8.8' }, body: { op: 'events', invoices: [{ id: inv.id, token: 'not-the-token' }, { id: 'INV2-NOPE-0001', token: inv.token }, { id: '../x', token: '' }] } });
+  expect('events: a wrong token, an unknown invoice or a malformed id returns nothing (HMAC binding)', stolen.status === 200 && stolen.json.events.length === 0);
+  expect('events: events about invoices that are not asked for are never returned', (await call(paypal, { headers: { 'x-forwarded-for': '8.8.8.8' }, body: { op: 'events', invoices: [] } })).json.events.length === 0);
+  events.clear();
+  for (let i = 0; i < events.MAX_EVENTS + 25; i++) events.record(paidEvent(`WH-N-${i}`));
+  expect('events: only the last 200 are kept, the oldest are forgotten (and can be stored again)', events.size() === 200 && events.record(paidEvent('WH-N-0')).stored === true && events.record(paidEvent('WH-N-224')).duplicate === true);
+  events.clear();
+  expect('events: an event about something that is not an invoice has no invoice id and is never served', events.record({ id: 'WH-X', event_type: 'PAYMENT.SALE.COMPLETED', resource: { id: 'PAY-123' } }).stored && events.eventsFor(['PAY-123']).length === 0);
+  const { verifyWebhook } = await import('../lib/paypal.js');
+  const kept = { MOCK: process.env.MOCK, ID: process.env.PAYPAL_WEBHOOK_ID };
+  process.env.MOCK = '';
+  delete process.env.PAYPAL_WEBHOOK_ID;
+  const origErr = console.error;
+  console.error = () => {};
+  const noId = await verifyWebhook({}, {}).then(() => 'verified', (e) => (e?.public ? 'refused' : 'crashed'));
+  console.error = origErr;
+  process.env.MOCK = kept.MOCK;
+  expect('webhook: without PAYPAL_WEBHOOK_ID outside mock mode nothing is verified and the user-facing error is generic', noId === 'refused');
+  const setup = (...a) => spawnSync(process.execPath, [fileURLToPath(new URL('./paypal-setup.js', import.meta.url)), ...a], { env: { PATH: process.env.PATH, MOCK: '1' }, encoding: 'utf8', timeout: 20000 });
+  const reg = setup('--webhook-url', 'https://cuadra.example.com/api/paypal-webhook');
+  expect('paypal:setup --webhook-url (mock) checks the URL, sends nothing and prints PAYPAL_WEBHOOK_ID', reg.status === 0 && /^PAYPAL_WEBHOOK_ID=WH-MOCK/m.test(reg.stdout) && /INVOICING\.INVOICE\.PAID/.test(reg.stdout));
+  expect('paypal:setup --webhook-url refuses http, localhost, credentials in the URL and a missing URL', ['http://cuadra.example.com/x', 'https://localhost/x', 'https://user:pw@cuadra.example.com/x', ''].every((u) => setup('--webhook-url', u).status === 1) && setup('--webhook-url').status === 1);
+  expect('.env.example names PAYPAL_WEBHOOK_ID (no value), and the function is routed and declared', /^PAYPAL_WEBHOOK_ID=$/m.test(readFileSync(new URL('../.env.example', import.meta.url), 'utf8')) && readFileSync(new URL('../dev-server.js', import.meta.url), 'utf8').includes('/api/paypal-webhook') && readFileSync(new URL('../vercel.json', import.meta.url), 'utf8').includes('api/paypal-webhook.js'));
+  expect('the Content-Security-Policy is unchanged (no new origins for the webhook)', !/paypal/.test(JSON.parse(readFileSync(new URL('../vercel.json', import.meta.url), 'utf8')).headers[0].headers.find((h) => h.key === 'Content-Security-Policy').value));
+}
+
 // Simulate an outage even where real credentials exist (e.g. a Render build with env vars set).
 for (const k of ['MOCK', 'MOCK_PAYPAL', 'PAYPAL_CLIENT_ID', 'PAYPAL_CLIENT_SECRET']) delete process.env[k];
 const origError = console.error;

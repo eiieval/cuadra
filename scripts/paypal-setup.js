@@ -3,7 +3,33 @@
 // Idempotent per product: PayPal-Request-Id makes a re-run return the same plans instead of creating new ones.
 import { loadEnv } from '../lib/env.js';
 
+// Usage:
+//   node scripts/paypal-setup.js                              creates the plans (PAYPAL_PLAN_PRO, PAYPAL_PLAN_TEAM)
+//   node scripts/paypal-setup.js --webhook-url <https url>    registers the webhook that api/paypal-webhook.js receives
+//                                                             and prints PAYPAL_WEBHOOK_ID (needs a public https URL)
+// With MOCK=1 nothing is sent to PayPal: the webhook step only checks the URL and prints a mock id.
 loadEnv();
+const args = process.argv.slice(2);
+const webhookAt = args.indexOf('--webhook-url');
+const WEBHOOK_EVENTS = ['INVOICING.INVOICE.PAID', 'INVOICING.INVOICE.CANCELLED', 'INVOICING.INVOICE.REFUNDED', 'INVOICING.INVOICE.UPDATED'];
+let webhookUrl = null;
+if (webhookAt >= 0) {
+  const raw = args[webhookAt + 1] || '';
+  try {
+    const u = new URL(raw);
+    const local = /^(localhost|127\.|0\.0\.0\.0|\[::1\])/i.test(u.hostname);
+    if (u.protocol !== 'https:' || u.username || u.password || local || raw.length > 300) throw new Error('bad');
+    webhookUrl = u.toString();
+  } catch {
+    console.error('--webhook-url needs a public https URL without credentials, e.g. https://your-host/api/paypal-webhook');
+    process.exit(1);
+  }
+  if (process.env.MOCK === '1') {
+    console.log(`# MOCK: nothing was sent to PayPal. The webhook would receive ${WEBHOOK_EVENTS.join(', ')} at ${webhookUrl}`);
+    console.log('PAYPAL_WEBHOOK_ID=WH-MOCK0001');
+    process.exit(0);
+  }
+}
 const BASE = process.env.PAYPAL_ENV === 'live' ? 'https://api-m.paypal.com' : 'https://api-m.sandbox.paypal.com';
 const { PAYPAL_CLIENT_ID: id, PAYPAL_CLIENT_SECRET: secret } = process.env;
 if (!id || !secret) {
@@ -34,6 +60,30 @@ async function post(path, body, requestId) {
     process.exit(1);
   }
   return j;
+}
+
+if (webhookUrl) {
+  // One webhook per URL: if PayPal already has it (409), look it up instead of failing.
+  const res = await fetch(`${BASE}/v1/notifications/webhooks`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ url: webhookUrl, event_types: WEBHOOK_EVENTS.map((name) => ({ name })) }),
+  });
+  let hook = await res.json().catch(() => ({}));
+  if (res.status === 400 && JSON.stringify(hook).includes('WEBHOOK_URL_ALREADY_EXISTS')) {
+    const list = await (await fetch(`${BASE}/v1/notifications/webhooks`, { headers: { authorization: `Bearer ${token}` } })).json().catch(() => ({}));
+    hook = (list.webhooks || []).find((w) => w.url === webhookUrl) || {};
+  } else if (!res.ok) {
+    console.error(`webhook registration failed (${res.status}): ${hook.message || ''}`);
+    process.exit(1);
+  }
+  if (!hook.id) {
+    console.error('PayPal did not return a webhook id.');
+    process.exit(1);
+  }
+  console.log(`# ${process.env.PAYPAL_ENV === 'live' ? 'Live' : 'Sandbox'} webhook registered for ${webhookUrl}. Add this to .env and to your deployment:`);
+  console.log(`PAYPAL_WEBHOOK_ID=${hook.id}`);
+  process.exit(0);
 }
 
 const product = await post('/v1/catalogs/products', {

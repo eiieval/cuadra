@@ -206,7 +206,20 @@ async function syncPaypal() {
   lastSync = Date.now();
   const due = invoicesOf(state.records).filter((r) => r.paypal?.id && OPEN(status(r))).slice(-5);
   let changed = 0;
-  for (const rec of due) {
+  // Accelerator: verified PayPal webhook events for these invoices (the server checked their signature with PayPal). The
+  // polling below stays as the fallback and confirms the rest, so a missed or late event never leaves a status behind.
+  const told = new Set();
+  const pushed = due.length ? await post('/api/paypal', { op: 'events', invoices: due.map((r) => ({ id: r.paypal.id, token: r.paypal.token })) }) : {};
+  for (const ev of Array.isArray(pushed.events) ? pushed.events : []) {
+    const rec = due.find((r) => r.paypal.id === ev.invoiceId);
+    if (!rec || !ev.status || told.has(rec.number) || ev.status === rec.paypal.status) continue;
+    told.add(rec.number);
+    log('paypal', 'sync', rec.number, `${rec.paypal.status} → ${ev.status} (webhook)`);
+    rec.paypal.status = ev.status;
+    changed++;
+    if (status(rec) === 'PAID') toast(`${rec.number} was paid with PayPal.`);
+  }
+  for (const rec of due.filter((r) => !told.has(r.number))) {
     const r = await post('/api/paypal', { op: 'status', id: rec.paypal.id, token: rec.paypal.token });
     if (r.error || r.status === rec.paypal.status) continue;
     log('paypal', 'sync', rec.number, `${rec.paypal.status} → ${r.status}`);

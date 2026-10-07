@@ -163,6 +163,12 @@ The agent never types a total: `draft_invoice` computes it, `issue_invoice` appe
 | Catalog Products v1, Billing Plans v1 | Cuadra's own Autónomo and Gestoría plans (`npm run paypal:setup`) |
 | Subscriptions v1 | Subscribe from the pricing section; status checked on return |
 
+### Webhooks
+
+`api/paypal-webhook.js` receives PayPal's invoice events (paid, cancelled, refunded, updated). It never trusts a delivery: the headers and the event go back to PayPal's `/v1/notifications/verify-webhook-signature` (needs `PAYPAL_WEBHOOK_ID`), verified events are deduplicated by `event_id`, and the last 200 are kept in the memory of the function. The browser asks for the events of its own invoices (`op: "events"`, bound to the session with the same HMAC token as every other operation) inside the PayPal sync, as an accelerator; the polling stays as the fallback. Register the webhook once with `npm run paypal:setup -- --webhook-url https://your-host/api/paypal-webhook`; with `MOCK=1` the script only checks the URL and the mock verifies one known test signature.
+
+This is demo-grade: memory is per function instance and is lost on a restart. In production the events are written to a server-side ledger that updates invoice status, and polling only reconciles.
+
 ## Business model
 
 | Plan | Price | For |
@@ -215,7 +221,7 @@ No dependencies to install: Node 20 or later is enough.
 **Deploy.** Vercel serves `public/` and the functions in `api/` as is (`vercel.json` sets the security headers). Render uses `render.yaml`: `npm test` gates the build, `npm start` serves the app, and `/api/health` is the health check.
 
 ```
-api/        agent.js · paypal.js · health.js       serverless functions
+api/        agent.js · paypal.js · paypal-webhook.js · health.js       serverless functions
 lib/        agent, LLM client, PayPal client, validation, request guard
 public/     index.html · verify.html · app.js · verify.js · vendor/ (QR, AG Grid, AG Charts, each with VERSION.md)
   js/       verifactu.js · ledger.js (engine) · chain.js · checks.js · plan.js · proposal.js · document.js · share.js

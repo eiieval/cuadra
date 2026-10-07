@@ -2,6 +2,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import { createAndSend, status, remind, cancel, recordPayment, subscribe, subscription, PLANS } from '../lib/paypal.js';
 import { cleanInvoice } from '../lib/validate.js';
 import { guard, json, clean } from '../lib/guard.js';
+import { eventsFor } from '../lib/events.js';
 import { publicMessage } from '../lib/errors.js';
 
 // Each PayPal invoice or subscription id is bound to the browser that created it with an HMAC token,
@@ -50,6 +51,14 @@ export default async function handler(req, res) {
       const method = METHODS.includes(g.body.method) ? g.body.method : 'BANK_TRANSFER';
       if (!(amount > 0 && amount <= 2000000)) return json(res, 400, { error: 'Invalid amount' });
       return json(res, 200, await recordPayment(id, { amount, date, method }));
+    }
+    // Verified webhook events (api/paypal-webhook.js) for the invoices of this session: an accelerator, never the only source.
+    // Each id must come with its own HMAC token, so a session can only ever read events about its own invoices.
+    if (op === 'events') {
+      const asked = (Array.isArray(g.body.invoices) ? g.body.invoices : []).slice(0, 20)
+        .map((i) => ({ id: String(i?.id || ''), token: String(i?.token || '') }))
+        .filter((i) => /^INV2-[A-Z0-9-]{4,40}$/.test(i.id) && owns(i.id, i.token));
+      return json(res, 200, { events: eventsFor(asked.map((i) => i.id)) });
     }
     if (op === 'subscribe') {
       const plan = String(g.body.plan || '');
