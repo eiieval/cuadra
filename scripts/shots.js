@@ -789,6 +789,144 @@ try {
     check(`[${view.name}] companies: no horizontal scroll`, (await overflow(page)) <= 0);
     await ctx.close();
   }
+  // 16. Round 3: a proposal the engine blocks (a bad check disables both Issue buttons), a signed record (shield in the chain,
+  //     signature line in the document, "Signed by this Cuadra deployment" on verify.html), an agent view applied to the ledger
+  //     and reset, and the plan buttons.
+  for (const view of VIEWS) {
+    const ctx = await newContext({ ...view.opts, permissions: ['clipboard-read', 'clipboard-write'] });
+    await ctx.addInitScript(() => localStorage.setItem('cuadra-tour-v1', '1'));
+    const page = await ctx.newPage();
+    watch(page, `${view.name} round 3`);
+    const shot = async (name, opts = {}) => { await page.screenshot({ path: `${OUT}/${name}-${view.name}.png`, ...opts }); };
+    const openAgent = async () => { if (view.mobile) { await page.click('#openAgent'); await settle(page, 450); } };
+    await page.goto(`${BASE}/`, { waitUntil: 'networkidle' });
+    await settle(page, 1500);
+    if (!view.mobile) await gridReady(page);
+
+    // The pricing buttons: this MOCK deployment has plans, so they work as before.
+    check(`[${view.name}] plans: with plans configured the Subscribe buttons are enabled`, (await page.locator('[data-plan="pro"]').isEnabled()) && /Subscribe with PayPal/.test(await page.locator('[data-plan="pro"]').innerText()));
+
+    // A proposal outside the limits and with a bad NIF: the checks say why, both Issue buttons are disabled, Discard works.
+    await openAgent();
+    await say(page, 'Invoice Bob Test SL (B12345675) for 1000000 hours of consulting at €1000000');
+    await page.waitForSelector('.proposal');
+    if (!view.mobile) await page.evaluate(() => { const c = document.querySelector('#chat'); c.scrollTop = c.scrollHeight; });
+    await settle(page, 400);
+    const bad = (await page.locator('.checks li.check-bad').allInnerTexts()).join(' | ');
+    check(`[${view.name}] bounds: the engine checks flag the quantity, the price and the NIF as problems`, /quantity 1,000,000 is outside 0 to 10,000/.test(bad) && /price 1,000,000 € is outside 0 to 100,000 €/.test(bad) && /NIF looks invalid/.test(bad));
+    check(`[${view.name}] bounds: both Issue buttons are disabled and the reason is written under them; Discard is enabled`, (await page.locator('.proposal [data-act="issue-send"]').isDisabled()) && (await page.locator('.proposal [data-act="issue"]').isDisabled()) && (await page.locator('.proposal [data-act="discard"]').isEnabled()) && /Cannot be issued: .*quantity 1,000,000/.test(await page.locator('.proposal-actions + .card-note').innerText()));
+    if (!view.mobile) {
+      // A taller window, so the whole paper, the disabled buttons, their reason and the checks fit in the agent column.
+      await page.setViewportSize({ width: 1280, height: 1000 });
+      await settle(page, 500);
+      await page.evaluate(() => { const c = document.querySelector('#chat'); c.scrollTop += document.querySelector('.proposal').getBoundingClientRect().top - c.getBoundingClientRect().top - 6; });
+      await page.screenshot({ path: `${OUT}/16-proposal-blocked-1280.png` });
+      await page.setViewportSize({ width: 1280, height: 800 });
+      await settle(page, 400);
+    } else await shot('16-proposal-blocked');
+    await page.click('.proposal [data-act="discard"]');
+    await settle(page, 500);
+    check(`[${view.name}] bounds: nothing was issued (still 8 records)`, (await page.evaluate(() => JSON.parse(localStorage.getItem('cuadra-demo-v1')).records.length)) === 8);
+
+    // Signed attestation: issue an invoice (Issue only, no PayPal needed), the browser asks the server to sign it.
+    await say(page, 'Invoice Acme Studio SL (B12345674) for 2 hours of consulting at €50');
+    await page.waitForSelector('.proposal [data-act="issue"]:not([disabled])');
+    await page.click('.proposal [data-act="issue"]');
+    await settle(page, 1500);
+    const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('cuadra-demo-v1')).records.at(-1));
+    check(`[${view.name}] attestation: the new record carries a signature (key id, signing time) and the chain block gets a shield`, /^[A-Za-z0-9_-]{86}$/.test(stored.attestation?.signature || '') && /^[0-9a-f]{16}$/.test(stored.attestation?.keyId || '') && (await page.locator('#chainTrack [title="Signed by this Cuadra deployment"]').count()) === 1);
+    check(`[${view.name}] attestation: only the new block has a shield (the sample records are unsigned)`, (await page.locator('#chainTrack .chain-block[data-i]').count()) === 9);
+    await page.locator('#chainTrack').scrollIntoViewIfNeeded();
+    await settle(page, 700);
+    await page.locator('#chainStrip').screenshot({ path: `${OUT}/16b-chain-shield-${view.name}.png` });
+    await page.locator(ROWS(view)).first().locator('button[data-do="view"]').click();
+    await settle(page, 1000);
+    check(`[${view.name}] attestation: the document footer says "Signed by this Cuadra deployment" with the key and the date`, /Signed by this Cuadra deployment · key [0-9a-f]{16} · \d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC/.test(await page.locator('#dlgBody [data-attest]').innerText()));
+    const [signed] = await Promise.all([ctx.waitForEvent('page'), page.click('[data-dl="print"]')]);
+    watch(signed, `${view.name} verify (signed)`);
+    await signed.waitForLoadState('networkidle');
+    await settle(signed, 1100);
+    const sv = await signed.locator('#verdict').innerText();
+    const sa = await signed.locator('#attest').innerText();
+    check(`[${view.name}] verify.html (signed): consistent copy, the not-who-issued-it sentence, and "Signed by this Cuadra deployment" with its shield`, /Consistent copy: the content matches its hash/.test(sv) && /not who issued it\. Scan the AEAT QR/.test(sv) && /Signed by this Cuadra deployment · key [0-9a-f]{16}/.test(sa) && (await signed.locator('#attest').getAttribute('data-state')) === 'ok' && (await signed.locator('#attest svg').count()) === 1 && /Signed by this Cuadra deployment/.test(await signed.locator('#paper [data-attest]').innerText()));
+    await signed.screenshot({ path: `${OUT}/16c-verify-signed-${view.name}.png`, fullPage: true });
+    check(`[${view.name}] verify.html (signed): no horizontal scroll`, (await overflow(signed)) <= 0);
+    const link = signed.url();
+    check(`[${view.name}] verify.html: the link carries the signature (it travels in the fragment)`, link.includes('#r='));
+    await signed.close();
+    await page.keyboard.press('Escape');
+    await page.locator(ROWS(view)).last().locator('button[data-do="view"]').click();
+    await settle(page, 900);
+    check(`[${view.name}] attestation: a sample record shows "Unsigned copy" in its document`, /Unsigned copy/.test(await page.locator('#dlgBody [data-attest]').innerText()));
+    const [unsigned] = await Promise.all([ctx.waitForEvent('page'), page.click('[data-dl="print"]')]);
+    watch(unsigned, `${view.name} verify (unsigned)`);
+    await unsigned.waitForLoadState('networkidle');
+    await settle(unsigned, 900);
+    check(`[${view.name}] verify.html (unsigned): still a consistent copy, and "Unsigned copy" in a neutral tone`, /Consistent copy/.test(await unsigned.locator('#verdict').innerText()) && /Unsigned copy/.test(await unsigned.locator('#attest').innerText()) && (await unsigned.locator('#attest').getAttribute('data-state')) === 'info');
+    await unsigned.screenshot({ path: `${OUT}/16d-verify-unsigned-${view.name}.png`, fullPage: true });
+    await unsigned.close();
+    await page.keyboard.press('Escape');
+
+    // An agent view: "show me overdue invoices sorted by amount" becomes a card with Apply view; applying it filters and
+    // sorts the grid (or the cards of a phone), the Reset view chip brings everything back.
+    await openAgent();
+    await say(page, 'show me overdue invoices sorted by amount');
+    await page.waitForSelector('#chat [data-act="apply-view"]');
+    check(`[${view.name}] view: the agent proposes a ledger view (title, what it does) with Apply view, and changes nothing yet`, /Overdue invoices, by amount/.test(await page.locator('#chat .card', { hasText: 'Ledger view' }).last().innerText()) && /status: overdue/.test(await page.locator('#chat .card', { hasText: 'Ledger view' }).last().innerText()) && (await page.locator(ROWS(view)).count()) === 9 && (await page.locator('#viewBar').isHidden()));
+    if (!view.mobile) await page.evaluate(() => { const c = document.querySelector('#chat'); c.scrollTop = c.scrollHeight; });
+    await settle(page, 300);
+    await shot('17a-view-proposal');
+    await page.click('#chat [data-act="apply-view"]');
+    await settle(page, 1200);
+    const shownClients = async () => (await page.locator(ROWS(view)).evaluateAll((els) => els.map((e) => e.innerText.replace(/\s+/g, ' ')))).map((t) => (/Hotel Mirador/.test(t) ? 'Mirador' : /Marta Pardo/.test(t) ? 'Marta' : 'other'));
+    check(`[${view.name}] view: Apply view shows the two overdue invoices, the bigger first, and the Reset view chip appears`, (await shownClients()).join() === 'Mirador,Marta' && (await page.locator('#viewBar').isVisible()) && /Overdue invoices, by amount/.test(await page.locator('#viewText').innerText()) && (await page.locator('#viewReset').innerText()) === 'Reset view');
+    if (!view.mobile) check('[1280] view: the grid chip "Overdue" is pressed, the sort is on Total (descending) and the totals row sums what shows', (await page.locator('#ledgerChips [data-chip="overdue"]').getAttribute('aria-pressed')) === 'true' && (await page.locator('#ledgerGrid .ag-header-cell[col-id="total"]').getAttribute('aria-sort')) === 'descending' && /Total · 2 invoices/.test(await page.locator('#ledgerGrid .ag-row-pinned').innerText()));
+    check(`[${view.name}] view: the activity log says "View applied", and the card says what happened`, /View applied/.test(await page.locator('#activityList').innerText()) && /View applied: Overdue invoices, by amount/.test(await page.locator('#chat').innerText()));
+    await page.evaluate(() => document.querySelector('#ledger').scrollIntoView({ block: 'start' }));
+    await settle(page, 700);
+    if (view.mobile) await page.evaluate(() => { document.querySelector('#openAgent').style.visibility = 'hidden'; });
+    await shot('17-view-applied');
+    await page.locator('#ledger').screenshot({ path: `${OUT}/17b-view-applied-ledger-${view.name}.png` });
+    if (view.mobile) await page.evaluate(() => { document.querySelector('#openAgent').style.visibility = ''; });
+    await page.click('#viewReset');
+    await settle(page, 900);
+    check(`[${view.name}] view: Reset view brings every row back and hides the chip`, (await page.locator(ROWS(view)).count()) === 9 && (await page.locator('#viewBar').isHidden()) && (!view.mobile || true) && (view.mobile || (await page.locator('#ledgerChips [data-chip="all"]').getAttribute('aria-pressed')) === 'true'));
+    if (!view.mobile) {
+      // A view can also hide columns and filter by client.
+      await openAgent();
+      await say(page, 'hide the hash column');
+      await page.click('#chat [data-act="apply-view"]:not([disabled])');
+      await settle(page, 900);
+      check('[1280] view: "hide the hash column" removes the Hash column from the grid and Reset view brings it back', (await page.locator('#ledgerGrid .ag-header-cell[col-id="hash"]').count()) === 0 && (await page.locator('#ledgerGrid .ag-header-cell[col-id="client"]').count()) === 1);
+      await page.click('#viewReset');
+      await settle(page, 800);
+      check('[1280] view: after Reset view the Hash column is back', (await page.locator('#ledgerGrid .ag-header-cell[col-id="hash"]').count()) === 1);
+    }
+    check(`[${view.name}] round 3: no horizontal scroll`, (await overflow(page)) <= 0);
+    await ctx.close();
+  }
+
+  // 17. Subscribe on a deployment without plans: /api/health says subscriptions:false, so the buttons are disabled and say why
+  //     (no 502 toast, no console error).
+  for (const view of VIEWS) {
+    const ctx = await newContext({ ...view.opts });
+    await ctx.addInitScript(() => localStorage.setItem('cuadra-tour-v1', '1'));
+    await ctx.route(`${BASE}/api/health`, (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, mode: 'sandbox', ai: true, paypal: true, attestation: false, subscriptions: false }) }));
+    await ctx.route(`${BASE}/api/attest`, (route) => route.fulfill({ status: 200, contentType: 'application/json', body: '{"enabled":false}' }));
+    const page = await ctx.newPage();
+    watch(page, `${view.name} no plans`);
+    await page.goto(`${BASE}/`, { waitUntil: 'networkidle' });
+    await settle(page, 1500);
+    const label = (await page.locator('[data-plan="pro"]').innerText()).trim();
+    check(`[${view.name}] plans: without plans on this deployment both Subscribe buttons are disabled and say "Plans not configured on this deployment"`, label === 'Plans not configured on this deployment' && (await page.locator('[data-plan="pro"]').isDisabled()) && (await page.locator('[data-plan="team"]').isDisabled()) && /Plans not configured/.test(await page.locator('[data-plan="team"]').innerText()));
+    await page.locator('#pricing').scrollIntoViewIfNeeded().catch(() => {});
+    await settle(page, 500);
+    await page.screenshot({ path: `${OUT}/18-plans-not-configured-${view.name}.png` });
+    // Without a key the app issues and never says "signed": the record has no attestation and nothing complains.
+    await page.evaluate(() => document.querySelector('#msg')?.focus());
+    check(`[${view.name}] attestation off: the page loaded without an error and without a shield`, (await page.locator('#chainTrack [title="Signed by this Cuadra deployment"]').count()) === 0);
+    await ctx.close();
+  }
 } finally {
   await browser.close();
   server?.kill();
